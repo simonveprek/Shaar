@@ -221,9 +221,8 @@ export function Landing() {
                 <motion.button
                   key="enter"
                   type="submit"
-                  aria-label="Search"
-                  title="Enter"
-                  className="group absolute top-full left-1/2 mt-5 -translate-x-1/2 cursor-pointer p-2"
+                  aria-label="Enter to confirm"
+                  className="group absolute top-full left-1/2 mt-5 flex -translate-x-1/2 cursor-pointer items-center gap-2.5 p-2 whitespace-nowrap"
                   initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
                   animate={{ opacity: 1, filter: "blur(0px)", transition: { duration: 0.25, ease: EASE } }}
                   exit={dissolve}
@@ -231,6 +230,9 @@ export function Landing() {
                   <Kbd className="h-7 min-w-7 rounded-item px-2 transition-colors duration-150 group-hover:bg-control-hover group-hover:text-foreground">
                     <Icon icon={CornerDownLeftIcon} size={14} />
                   </Kbd>
+                  <span className="font-mono text-[10.5px] tracking-[0.28em] text-muted uppercase transition-colors duration-150 group-hover:text-foreground">
+                    Enter to confirm
+                  </span>
                 </motion.button>
               )}
             </AnimatePresence>
