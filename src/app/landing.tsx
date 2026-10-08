@@ -33,6 +33,36 @@ const ASH: AuraColors = ["#c8c8cc", "#5c5c63", "#9a9aa1", "#3a3a40"];
 
 const QUESTION = "Who are we looking for?";
 
+/*
+ * Demo mode (/demo). The whole flow with a fictional subject, the same Mara Vell as the sample file, and no
+ * API calls: her name types itself in, the search is staged, and the file is the sample. One of the accounts
+ * found is a look-alike who is not her, to show why the visitor has to confirm.
+ */
+const DEMO_NAME = "Mara Vell";
+const DEMO_SEARCH_MS = 2800;
+const DEMO_CANDIDATES: Candidate[] = [
+  {
+    id: "x:maravell", platform: "x", label: "X (Twitter)", handle: "maravell", url: "https://x.com/maravell",
+    title: "Mara Vell (@maravell) / X", snippet: "Photographer. Concrete, film, early trains. Prague. 2,340 followers.", match: 1,
+  },
+  {
+    id: "instagram:mara.vell", platform: "instagram", label: "Instagram", handle: "mara.vell", url: "https://instagram.com/mara.vell",
+    title: "Mara Vell (@mara.vell) • Instagram photos and videos", snippet: "4,120 followers. Film photography, housing blocks, the river at dawn.", match: 1,
+  },
+  {
+    id: "linkedin:mara-vell", platform: "linkedin", label: "LinkedIn", handle: "mara-vell", url: "https://linkedin.com/in/mara-vell",
+    title: "Mara Vell, Photographer, Prague", snippet: "Freelance architectural photographer. Prints shown at Studio Nord.", match: 1,
+  },
+  {
+    id: "reddit:vell_m", platform: "reddit", label: "Reddit", handle: "vell_m", url: "https://reddit.com/user/vell_m",
+    title: "u/vell_m (Mara Vell)", snippet: "Posts in r/AnalogCommunity, r/brutalism and r/Prague.", match: 1,
+  },
+  {
+    id: "facebook:maravella.bakes", platform: "facebook", label: "Facebook", handle: "maravella.bakes", url: "https://facebook.com/maravella.bakes",
+    title: "Mara Vella Bakes | Sliema, Malta", snippet: "Family bakery in Sliema since 1998. Pastizzi every morning.", match: 0.5,
+  },
+];
+
 const PURPOSES = [
   { id: "gather", title: "Gather intelligence", line: "Everything they have made public, in one file." },
   { id: "read", title: "Read them", line: "How they think, what they believe, how they talk." },
@@ -73,7 +103,7 @@ const WATCHING: Stage[] = ["confirmed", "purpose", "searching", "candidates", "s
 /** How often to ask whether the search has finished. */
 const POLL_MS = 2500;
 
-export function Landing() {
+export function Landing({ demo = false }: { demo?: boolean }) {
   const reduce = useReducedMotion() ?? false;
   const [stage, setStage] = useState<Stage>("opening");
   // The opening played, so the gate and motto travel to their corners instead of fading in.
@@ -186,6 +216,14 @@ export function Landing() {
   const search = async (purposeId: Purpose) => {
     const mine = ++generation.current;
     setStage("searching");
+    if (demo) {
+      await new Promise((r) => setTimeout(r, reduce ? 300 : DEMO_SEARCH_MS));
+      if (generation.current !== mine) return;
+      setCandidates(DEMO_CANDIDATES);
+      setPicked([]);
+      setStage("candidates");
+      return;
+    }
     try {
       const title = PURPOSES.find((p) => p.id === purposeId)?.title;
       let { discovery } = await api<{ discovery: DiscoveryRow }>("/api/discover", {
@@ -227,6 +265,10 @@ export function Landing() {
     const mine = generation.current;
     setStage("starting");
     stirBy(STIR.choose);
+    if (demo) {
+      setTimeout(() => generation.current === mine && router.push("/demo/file"), reduce ? 0 : 900);
+      return;
+    }
     try {
       const chosen = candidates.filter((c) => picked.includes(c.id));
       const title = PURPOSES.find((p) => p.id === purpose)?.title ?? "Gather intelligence";
@@ -351,7 +393,14 @@ export function Landing() {
 
           <div className="relative flex w-full max-w-[920px] flex-col items-center">
             {stage === "name" ? (
-              <Ask key="name" delay={opened ? 0.7 : 0.8} reduce={reduce} onType={() => stirBy(STIR.key)} onAnswer={answer} />
+              <Ask
+                key="name"
+                delay={opened ? 0.7 : 0.8}
+                reduce={reduce}
+                autofill={demo ? DEMO_NAME : undefined}
+                onType={() => stirBy(STIR.key)}
+                onAnswer={answer}
+              />
             ) : (
               <>
                 {/* The name never leaves. It was confirmed where it was typed and only glides up for the cards. */}
@@ -445,15 +494,36 @@ function DrawnGate({ className }: { className?: string }) {
 function Ask({
   delay,
   reduce,
+  autofill,
   onType,
   onAnswer,
 }: {
   delay: number;
   reduce: boolean;
+  /** Demo mode: this name types itself in once the question has risen, and the field stays as typed. */
+  autofill?: string;
   onType: () => void;
   onAnswer: (value: string) => void;
 }) {
   const [value, setValue] = useState("");
+
+  // Types the demo name one letter at a time, like someone at the keyboard.
+  useEffect(() => {
+    if (!autofill) return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const start = reduce ? 0 : (delay + 1.6) * 1000;
+    [...autofill].forEach((_, i) =>
+      timers.push(
+        setTimeout(() => {
+          setValue(autofill.slice(0, i + 1));
+          onType();
+        }, start + (reduce ? 0 : i * 85 + (i % 3) * 20)),
+      ),
+    );
+    return () => timers.forEach(clearTimeout);
+    // Once, when the field appears.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autofill]);
   // The question rises word by word once. Coming back after a cleared field, it only fades in.
   const [risen, setRisen] = useState(false);
   useEffect(() => {
@@ -480,6 +550,7 @@ function Ask({
         spellCheck={false}
         enterKeyHint="go"
         value={value}
+        readOnly={Boolean(autofill)}
         onChange={(e) => {
           setValue(e.target.value);
           onType();

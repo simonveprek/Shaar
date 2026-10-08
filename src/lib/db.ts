@@ -103,6 +103,10 @@ alter table interviews add column if not exists feedback_response_id text;
 alter table interviews add column if not exists feedback jsonb;
 alter table interviews add column if not exists feedback_error text;
 
+-- Runs over the Apify plan's concurrency limit wait (running, no apify_run_id) and start on a later poll.
+alter table connector_runs add column if not exists max_items integer;
+alter table connector_runs add column if not exists start_lease timestamptz;
+
 create table if not exists discoveries (
   id            uuid primary key default gen_random_uuid(),
   user_id       text not null,

@@ -66,20 +66,34 @@ export async function startDiscovery(userId: string, name: string, purpose: stri
     name,
     purpose,
   ]);
+  return launchSearch(row);
+}
+
+/**
+ * Starts the search run. When the Apify plan has no free slot (a file may still be collecting), the search
+ * stays queued and syncDiscovery starts it on a later poll.
+ */
+async function launchSearch(row: DiscoveryRow): Promise<DiscoveryRow> {
   try {
-    const queries = PROFILE_SITES.map((s) => `"${name.replace(/"/g, "")}" site:${s.site}`).join("\n");
+    const queries = PROFILE_SITES.map((s) => `"${row.name.replace(/"/g, "")}" site:${s.site}`).join("\n");
     const run = await apify()
       .actor(ACTOR)
       .start(
         { queries, maxPagesPerQuery: 1, mobileResults: false, saveHtml: false },
         { maxTotalChargeUsd: env().APIFY_MAX_CHARGE_USD_PER_RUN },
       );
-    return one<DiscoveryRow>("update discoveries set apify_run_id = $1 where id = $2 returning *", [run.id, row.id]);
+    const updated = await maybeOne<DiscoveryRow>(
+      "update discoveries set apify_run_id = $1 where id = $2 and apify_run_id is null returning *",
+      [run.id, row.id],
+    );
+    return updated ?? getDiscovery(row.id, row.user_id);
   } catch (err) {
     // A missing Apify token is a setup problem the visitor should hear about plainly, not a failed search.
     if (err instanceof HttpError) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    if (/concurrent actor runs|memory limit/i.test(message)) return row;
     return one<DiscoveryRow>("update discoveries set status = 'failed', error = $1 where id = $2 returning *", [
-      `Could not start the search: ${err instanceof Error ? err.message : err}`,
+      `Could not start the search: ${message}`,
       row.id,
     ]);
   }
@@ -95,7 +109,8 @@ export async function getDiscovery(id: string, userId: string): Promise<Discover
 
 /** Checks the search; once it has finished, turns its results into ranked candidates. Safe to call repeatedly. */
 export async function syncDiscovery(row: DiscoveryRow): Promise<DiscoveryRow> {
-  if (row.status !== "searching" || !row.apify_run_id) return row;
+  if (row.status !== "searching") return row;
+  if (!row.apify_run_id) return launchSearch(row);
   const run = await apify().run(row.apify_run_id).get();
   if (!run || !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) return row;
 

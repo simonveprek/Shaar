@@ -40,9 +40,17 @@ export type RunRow = {
   status: "running" | "ingesting" | "succeeded" | "failed";
   item_count: number;
   error: string | null;
+  max_items: number | null;
+  start_lease: string | null;
   created_at: string;
   finished_at: string | null;
 };
+
+/** Set on a run that is waiting for a free Apify slot. */
+export const WAITING_FOR_SLOT = "Waiting for a free Apify slot";
+
+/** A run with no Apify run yet is queued behind the plan's concurrency or memory limit. */
+export const isQueued = (run: Pick<RunRow, "status" | "apify_run_id">) => run.status === "running" && !run.apify_run_id;
 
 export type PersonaRow = {
   id: string;
@@ -89,7 +97,7 @@ export async function startConnector(job: JobRow, t: Target): Promise<RunRow[]> 
   return Promise.all(connector.actors.map((actor) => startActorRun(job, connector.platform, actor, t.target, opts)));
 }
 
-/** Starts one Apify actor run and records it. Failures to start are recorded on the row, not thrown. */
+/** Records one actor run and starts it on Apify, or queues it when the plan has no free slot. */
 async function startActorRun(
   job: JobRow,
   platform: string,
@@ -97,13 +105,19 @@ async function startActorRun(
   target: string,
   opts: ConnectorOptions,
 ): Promise<RunRow> {
-  const input = actor.buildInput(target, opts);
   const row = await one<RunRow>(
-    `insert into connector_runs (job_id, user_id, platform, target, actor_id, input)
-     values ($1, $2, $3, $4, $5, $6::jsonb) returning *`,
-    [job.id, job.user_id, platform, target, actor.actorId, json(input)],
+    `insert into connector_runs (job_id, user_id, platform, target, actor_id, input, max_items, start_lease)
+     values ($1, $2, $3, $4, $5, $6::jsonb, $7, now() + interval '1 minute') returning *`,
+    [job.id, job.user_id, platform, target, actor.actorId, json(actor.buildInput(target, opts)), actor.maxItems(opts)],
   );
+  return launchRun(row);
+}
 
+/**
+ * Starts a recorded run on Apify. Hitting the plan's concurrent-run or memory limit is not a failure: the run
+ * stays queued and a later advanceJob starts it once a slot frees up. Other failures are recorded on the row.
+ */
+async function launchRun(row: RunRow): Promise<RunRow> {
   try {
     const { PUBLIC_API_URL, APIFY_WEBHOOK_SECRET, APIFY_MAX_CHARGE_USD_PER_RUN } = env();
     const webhooks = PUBLIC_API_URL && APIFY_WEBHOOK_SECRET
@@ -116,20 +130,25 @@ async function startActorRun(
       : undefined;
 
     const run = await apify()
-      .actor(actor.actorId)
-      .start(input, {
+      .actor(row.actor_id)
+      .start(row.input, {
         webhooks,
-        maxItems: actor.maxItems(opts),
+        maxItems: row.max_items ?? undefined,
         maxTotalChargeUsd: APIFY_MAX_CHARGE_USD_PER_RUN,
       });
 
-    return one<RunRow>("update connector_runs set apify_run_id = $1, dataset_id = $2 where id = $3 returning *", [
-      run.id,
-      run.defaultDatasetId,
-      row.id,
-    ]);
+    return one<RunRow>(
+      "update connector_runs set apify_run_id = $1, dataset_id = $2, error = null, start_lease = null where id = $3 returning *",
+      [run.id, run.defaultDatasetId, row.id],
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (/concurrent actor runs|memory limit/i.test(message)) {
+      return one<RunRow>("update connector_runs set error = $1, start_lease = null where id = $2 returning *", [
+        WAITING_FOR_SLOT,
+        row.id,
+      ]);
+    }
     return finishRun(row.id, { status: "failed", error: `Could not start Apify actor: ${message}` });
   }
 }
@@ -143,6 +162,16 @@ const WEBHOOK_EVENTS = [
 
 /** Checks a running Apify run; when it has finished, ingests its dataset exactly once. */
 export async function syncConnectorRun(run: RunRow): Promise<RunRow> {
+  if (isQueued(run)) {
+    // A short lease, so two pollers can't both start it. A start that dies mid-way frees up when it expires.
+    const claimed = await maybeOne<RunRow>(
+      `update connector_runs set start_lease = now() + interval '1 minute'
+       where id = $1 and status = 'running' and apify_run_id is null and (start_lease is null or start_lease < now())
+       returning *`,
+      [run.id],
+    );
+    return claimed ? launchRun(claimed) : run;
+  }
   if (run.status !== "running" || !run.apify_run_id) return run;
 
   const apifyRun = await apify().run(run.apify_run_id).get();
