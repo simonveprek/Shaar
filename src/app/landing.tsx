@@ -16,8 +16,8 @@ import { cx, EASE } from "@/components/ui";
  *   0.5  the mark comes into focus
  *   0.8  the question rises word by word
  *   1.6  the motto
- * On a name: the field dissolves, a scan sweeps the grid, the light flares
- * and the name locks in letter by letter.
+ * On a name: the field dissolves, the name waits as a ghost, a line reads
+ * across it and turns it solid, then it is confirmed and the light answers.
  */
 
 /** Cold greys, never pure white, so the light reads as a screen left on in an empty room. */
@@ -41,7 +41,6 @@ export function Landing() {
   const reduce = useReducedMotion() ?? false;
   const [name, setName] = useState("");
   const [sent, setSent] = useState<string | null>(null);
-  const [scan, setScan] = useState(0);
   const grid = useRef<HTMLDivElement>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const mountedAt = useRef<number | null>(null);
@@ -100,8 +99,6 @@ export function Landing() {
     event.preventDefault();
     const subject = name.trim();
     if (!subject) return;
-    sentAt.current = performance.now();
-    setScan((n) => n + 1);
     setSent(subject);
   };
 
@@ -134,25 +131,6 @@ export function Landing() {
         )}
       />
 
-      {/* The scan. One sweep down the screen when a name goes in, lighting the grid as it passes. */}
-      <AnimatePresence>
-        {scan > 0 && sent && !reduce && (
-          <motion.div
-            key={scan}
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-0 h-[34svh]"
-            // Percent of the band's own height (a third of the screen). Framer cannot animate svh.
-            initial={{ y: "-100%", opacity: 1 }}
-            animate={{ y: "300%" }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 1.5, ease: [0.65, 0, 0.35, 1] }}
-          >
-            <div className={cx("absolute inset-0 [mask-image:linear-gradient(to_bottom,transparent,black)]", GRID)} />
-            <div className="absolute inset-x-0 bottom-0 h-px bg-foreground/60 shadow-[0_0_24px_4px_color-mix(in_oklab,var(--foreground)_25%,transparent)]" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* The light under the gate. A band wider than the screen, so only its bottom edge glows. */}
       <motion.div
         aria-hidden="true"
@@ -165,7 +143,7 @@ export function Landing() {
               transition: { duration: 1.8, ease: EASE, delay: AT.light },
             })}
       >
-        <Aura palette={ASH} level={level} intensity={1.4} speed={sent ? 0.35 : 0.08} radius={0} className="h-full w-full" />
+        <Aura palette={ASH} level={level} intensity={1.4} speed={sent ? 0.3 : 0.08} radius={0} className="h-full w-full" />
       </motion.div>
 
       <motion.div className="absolute top-6 left-6 sm:top-8 sm:left-8" {...enter(AT.mark, { opacity: 0, filter: "blur(10px)", y: 6 })}>
@@ -182,7 +160,7 @@ export function Landing() {
       <AnimatePresence mode="wait" initial={false}>
         {sent ? (
           <motion.div key="subject" exit={dissolve} className="relative">
-            <Subject name={sent} reduce={reduce} onReset={reset} />
+            <Subject name={sent} reduce={reduce} onConfirmed={() => (sentAt.current = performance.now())} onReset={reset} />
           </motion.div>
         ) : (
           <motion.form
@@ -259,33 +237,74 @@ function Question({ first, reduce }: { first: boolean; reduce: boolean }) {
   );
 }
 
-/** The name, locking in letter by letter behind the scan, then settling into a slow shimmer. */
-function Subject({ name, reduce, onReset }: { name: string; reduce: boolean; onReset: () => void }) {
-  const [settled, setSettled] = useState(reduce);
-  const letters = Array.from(name);
+/**
+ * The name being confirmed. It waits as a ghost, a thin line reads across it
+ * and leaves it solid behind, then "Confirmed" settles underneath.
+ */
+function Subject({
+  name,
+  reduce,
+  onConfirmed,
+  onReset,
+}: {
+  name: string;
+  reduce: boolean;
+  onConfirmed: () => void;
+  onReset: () => void;
+}) {
+  const [confirmed, setConfirmed] = useState(reduce);
+  const confirm = () => {
+    setConfirmed(true);
+    onConfirmed();
+  };
+  useEffect(() => {
+    if (reduce) onConfirmed();
+    // Once, when the name arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const read = { duration: 0.9, ease: [0.65, 0, 0.35, 1] as const, delay: 0.25 };
+
   return (
-    <button
-      type="button"
-      onClick={onReset}
-      title="Someone else"
-      aria-label={name}
-      className={cx("max-w-[16ch] cursor-pointer text-center break-words", TYPE, settled && "shimmer")}
-    >
-      {settled
-        ? name
-        : letters.map((letter, i) => (
-            <span key={i} aria-hidden="true" className="inline-block overflow-hidden pb-[0.12em] align-bottom">
-              <motion.span
-                className="inline-block whitespace-pre"
-                initial={{ y: "110%", opacity: 0 }}
-                animate={{ y: "0%", opacity: 1 }}
-                transition={{ duration: 0.8, ease: EASE, delay: 0.35 + i * 0.03 }}
-                onAnimationComplete={i === letters.length - 1 ? () => setSettled(true) : undefined}
-              >
-                {letter}
-              </motion.span>
-            </span>
-          ))}
+    <button type="button" onClick={onReset} title="Someone else" aria-label={`${name}, confirmed`} className="relative cursor-pointer">
+      <span aria-hidden="true" className={cx("relative block max-w-[16ch] text-center break-words", TYPE)}>
+        {/* The ghost, as it was typed. */}
+        <span
+          className={cx(
+            "block text-foreground/20 blur-[1.5px] transition-opacity duration-250 ease-smooth",
+            confirmed && "opacity-0",
+          )}
+        >
+          {name}
+        </span>
+        {/* The confirmed name, revealed behind the line. */}
+        <motion.span
+          className={cx("absolute inset-0 block", confirmed && "shimmer")}
+          initial={reduce ? false : { clipPath: "inset(0 100% 0 0)" }}
+          animate={{ clipPath: "inset(0 0% 0 0)" }}
+          transition={read}
+          onAnimationComplete={reduce ? undefined : confirm}
+        >
+          {name}
+        </motion.span>
+        {/* The line that reads it. */}
+        {!reduce && (
+          <motion.span
+            className="absolute -top-[0.08em] -bottom-[0.08em] w-px bg-foreground/80 shadow-[0_0_14px_2px_color-mix(in_oklab,var(--foreground)_30%,transparent)]"
+            initial={{ left: "0%", opacity: 0 }}
+            animate={{ left: "100%", opacity: [0, 1, 1, 0] }}
+            transition={{ ...read, opacity: { duration: read.duration, delay: read.delay, times: [0, 0.08, 0.86, 1] } }}
+          />
+        )}
+      </span>
+      <motion.span
+        className="absolute top-full left-1/2 mt-7 -translate-x-1/2 font-mono text-[10.5px] tracking-[0.28em] whitespace-nowrap text-muted uppercase"
+        initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
+        animate={confirmed ? { opacity: 1, filter: "blur(0px)" } : undefined}
+        transition={{ duration: 0.6, ease: EASE }}
+      >
+        Confirmed
+      </motion.span>
     </button>
   );
 }
