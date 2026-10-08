@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion, useReducedMotion, type TargetAndTransition } from "framer-motion";
+import { AnimatePresence, LayoutGroup, motion, useReducedMotion, type TargetAndTransition } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import { ArrowRight01Icon, CornerDownLeftIcon, Tick02Icon } from "@hugeicons/core-free-icons";
@@ -9,6 +9,7 @@ import { GATE, Logo } from "@/components/logo";
 import { Card, CardBody, CardStage, cx, EASE, Icon, Kbd } from "@/components/ui";
 import { api, ApiError } from "@/lib/client";
 import type { Candidate, DiscoveryRow } from "@/lib/discovery";
+import { FLY, Searching, SITES, type Found, type Phase } from "./searching";
 
 /*
  * Shaar. The gate. Black, one thing at a time, and light coming from under
@@ -24,8 +25,9 @@ import type { Candidate, DiscoveryRow } from "@/lib/discovery";
  *
  * Then: who are we looking for. The name is confirmed where it was typed and
  * the light answers. Three cards ask what to do with them. Shaar searches the
- * open web for their accounts, the visitor confirms which are really them,
- * and the file opens.
+ * open web for their accounts and plays the search out like a trailer (see
+ * searching.tsx); the accounts it found fly into cards, the visitor confirms
+ * which are really them, and the file opens.
  */
 
 /** Cold greys, never pure white, so the light reads as a screen left on in an empty room. */
@@ -39,7 +41,7 @@ const QUESTION = "Who are we looking for?";
  * found is a look-alike who is not her, to show why the visitor has to confirm.
  */
 const DEMO_NAME = "Mara Vell";
-const DEMO_SEARCH_MS = 2800;
+const DEMO_SEARCH_MS = 5200;
 const DEMO_CANDIDATES: Candidate[] = [
   {
     id: "x:maravell", platform: "x", label: "X (Twitter)", handle: "maravell", url: "https://x.com/maravell",
@@ -62,6 +64,11 @@ const DEMO_CANDIDATES: Candidate[] = [
     title: "Mara Vella Bakes | Sliema, Malta", snippet: "Family bakery in Sliema since 1998. Pastizzi every morning.", match: 0.5,
   },
 ];
+
+/** How many Google results each site gave back in the demo search. */
+const DEMO_SCANNED: Record<string, number> = {
+  instagram: 10, tiktok: 4, x: 9, linkedin: 8, youtube: 3, facebook: 10, reddit: 6, threads: 2, pinterest: 5,
+};
 
 const PURPOSES = [
   { id: "gather", title: "Gather intelligence", line: "Everything they have made public, in one file." },
@@ -100,6 +107,15 @@ type Stage = "opening" | "name" | "confirmed" | "purpose" | "searching" | "candi
 /** Stages where the light thinks harder, because something is being looked for. */
 const WATCHING: Stage[] = ["confirmed", "purpose", "searching", "candidates", "starting"];
 
+/** The caption over each shot of the search. */
+const SHOT: Record<Exclude<Phase, "line" | "done">, string> = {
+  ask: "Writing the search",
+  spread: "One search for every site",
+  search: "Searching public records",
+  read: "Reading what came back",
+  sieve: "Keeping only them",
+};
+
 /** How often to ask whether the search has finished. */
 const POLL_MS = 2500;
 
@@ -110,6 +126,10 @@ export function Landing({ demo = false }: { demo?: boolean }) {
   const opened = !reduce;
   const [subject, setSubject] = useState("");
   const [purpose, setPurpose] = useState<Purpose | null>(null);
+  const [found, setFound] = useState<Found | null>(null);
+  const [shot, setShot] = useState<Phase>("ask");
+  // The accounts arrive by flying out of the search into their cards, unless the search was skipped.
+  const [morph, setMorph] = useState(false);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
   const [problem, setProblem] = useState("");
@@ -212,16 +232,17 @@ export function Landing({ demo = false }: { demo?: boolean }) {
     setStage("failed");
   };
 
-  // Search the open web for the name's accounts, then wait for the visitor to say which are really them.
+  // Search the open web for the name's accounts. The search plays out what it found, then the visitor says
+  // which are really them.
   const search = async (purposeId: Purpose) => {
     const mine = ++generation.current;
+    setFound(null);
+    setShot("ask");
     setStage("searching");
     if (demo) {
       await new Promise((r) => setTimeout(r, reduce ? 300 : DEMO_SEARCH_MS));
       if (generation.current !== mine) return;
-      setCandidates(DEMO_CANDIDATES);
-      setPicked([]);
-      setStage("candidates");
+      setFound({ candidates: DEMO_CANDIDATES, scanned: DEMO_SCANNED });
       return;
     }
     try {
@@ -237,13 +258,20 @@ export function Landing({ demo = false }: { demo?: boolean }) {
       }
       if (generation.current !== mine) return;
       if (discovery.status === "failed") throw new ApiError(502, "The search did not finish. Try again.");
-      if (!discovery.candidates.length) throw new ApiError(404, "Nothing public under this name");
-      setCandidates(discovery.candidates);
-      setPicked([]);
-      setStage("candidates");
+      setFound({ candidates: discovery.candidates, scanned: discovery.scanned });
     } catch (err) {
       if (generation.current === mine) fail(err);
     }
+  };
+
+  // The search has played out (or was skipped with Enter). Show the accounts, or say there were none.
+  const showFound = (flying: boolean) => {
+    if (!found) return;
+    if (!found.candidates.length) return fail(new ApiError(404, "Nothing public under this name"));
+    setMorph(flying && !reduce);
+    setCandidates(found.candidates);
+    setPicked([]);
+    setStage("candidates");
   };
 
   const choose = (id: Purpose) => {
@@ -290,6 +318,7 @@ export function Landing({ demo = false }: { demo?: boolean }) {
     generation.current++;
     setSubject("");
     setPurpose(null);
+    setFound(null);
     setCandidates([]);
     setPicked([]);
     setProblem("");
@@ -303,6 +332,7 @@ export function Landing({ demo = false }: { demo?: boolean }) {
     keys.current = (event: KeyboardEvent) => {
       if (stage === "opening") return skipOpening();
       if (event.key === "Escape" && stage !== "name") return reset();
+      if (event.key === "Enter" && stage === "searching" && found) return showFound(false);
       if (event.key === "Enter" && stage === "candidates") return void open();
       const card = PURPOSES[Number(event.key) - 1];
       if (stage === "purpose" && card) choose(card.id);
@@ -402,7 +432,7 @@ export function Landing({ demo = false }: { demo?: boolean }) {
                 onAnswer={answer}
               />
             ) : (
-              <>
+              <LayoutGroup>
                 {/* The name never leaves. It was confirmed where it was typed and only glides up for the cards. */}
                 <motion.div layout="position" transition={{ duration: 0.9, ease: EASE }} className="flex max-w-full flex-col items-center">
                   <Subject name={subject} reduce={reduce} onConfirmed={() => (confirmedAt.current = performance.now())} onReset={reset} />
@@ -413,18 +443,36 @@ export function Landing({ demo = false }: { demo?: boolean }) {
                         : stage === "purpose"
                           ? "What do we do with them"
                           : stage === "searching"
-                            ? "Searching public records"
-                            : stage === "candidates"
+                            ? shot === "line" || shot === "done"
+                              ? foundCaption(found)
+                              : SHOT[shot]
+                              : stage === "candidates"
                               ? "Is this them"
                               : stage === "starting"
                                 ? "Opening the file"
                                 : problem
                     }
-                    live={stage === "searching" || stage === "starting"}
+                    live={(stage === "searching" && (shot === "search" || shot === "read")) || stage === "starting"}
                     reduce={reduce}
                   />
                 </motion.div>
 
+                {/*
+                  * One cell for whatever is under the caption, so what leaves never pushes what arrives. The
+                  * search sits outside the presence: it is gone the moment the cards mount, in the same render,
+                  * which is what lets its accounts fly into the cards by layoutId.
+                  */}
+                <div className="grid w-full grid-cols-1 justify-items-center [&>*]:col-start-1 [&>*]:row-start-1">
+                {stage === "searching" && (
+                  <Searching
+                    name={subject}
+                    found={found}
+                    reduce={reduce}
+                    onStir={stirBy}
+                    onPhase={setShot}
+                    onDone={() => showFound(true)}
+                  />
+                )}
                 <AnimatePresence mode="wait">
                   {stage === "purpose" && (
                     <Cards key="purpose" reduce={reduce} chosen={purpose} onChoose={choose} onHover={() => stirBy(STIR.card)} />
@@ -432,6 +480,7 @@ export function Landing({ demo = false }: { demo?: boolean }) {
                   {(stage === "candidates" || stage === "starting") && (
                     <Candidates
                       key="candidates"
+                      morph={morph}
                       reduce={reduce}
                       candidates={candidates}
                       picked={picked}
@@ -454,13 +503,20 @@ export function Landing({ demo = false }: { demo?: boolean }) {
                     </motion.button>
                   )}
                 </AnimatePresence>
-              </>
+                </div>
+              </LayoutGroup>
             )}
           </div>
         </>
       )}
     </main>
   );
+}
+
+/** Where the search found them, said once its accounts have lined up. */
+function foundCaption(found: Found | null) {
+  const sites = new Set(found?.candidates.map((c) => c.platform)).size;
+  return sites ? `Found on ${sites} of ${SITES.length} sites` : "Nothing under this name";
 }
 
 /** The gate drawing itself. A hairline traces every arch, then the shape fills and the line falls away. */
@@ -831,9 +887,12 @@ function Motif({ id, live }: { id: Purpose; live: boolean }) {
 
 /**
  * The accounts the search found, as Fragms cards. The visitor chooses every one
- * that is really this person; nothing is collected until they confirm.
+ * that is really this person; nothing is collected until they confirm. Straight
+ * after the search, each card opens out of its account in the search's row:
+ * the frame, the site and the handle share layoutIds with it.
  */
 function Candidates({
+  morph,
   reduce,
   candidates,
   picked,
@@ -841,6 +900,8 @@ function Candidates({
   onToggle,
   onOpen,
 }: {
+  /** Fly in from the search's row instead of rising in. */
+  morph: boolean;
   reduce: boolean;
   candidates: Candidate[];
   picked: string[];
@@ -851,7 +912,7 @@ function Candidates({
   return (
     <motion.div
       className="mt-10 flex w-full max-w-[880px] flex-col items-center"
-      initial={reduce ? false : "hidden"}
+      initial={reduce || morph ? false : "hidden"}
       animate="show"
       exit={dissolve}
       variants={{ hidden: {}, show: { transition: { staggerChildren: 0.06, delayChildren: 0.2 } } }}
@@ -866,10 +927,16 @@ function Candidates({
               aria-pressed={on}
               disabled={busy}
               onClick={() => onToggle(c.id)}
-              variants={{
-                hidden: { opacity: 0, y: 18, filter: "blur(6px)" },
-                show: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: 0.7, ease: EASE } },
-              }}
+              layoutId={morph ? `found-${c.id}` : undefined}
+              transition={{ layout: FLY }}
+              variants={
+                morph
+                  ? undefined
+                  : {
+                      hidden: { opacity: 0, y: 18, filter: "blur(6px)" },
+                      show: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: 0.7, ease: EASE } },
+                    }
+              }
               className="cursor-pointer rounded-card text-left disabled:cursor-default"
             >
               <Card
@@ -880,20 +947,36 @@ function Candidates({
                 )}
               >
                 <CardStage className="h-20 flex-col gap-1">
-                  <span className={CAPTION}>{c.label}</span>
-                  <span className="max-w-[90%] truncate text-[17px] font-medium tracking-[-0.01em]">@{c.handle}</span>
+                  <motion.span layoutId={morph ? `found-label-${c.id}` : undefined} transition={{ layout: FLY }} className={CAPTION}>
+                    {c.label}
+                  </motion.span>
+                  <motion.span
+                    layoutId={morph ? `found-handle-${c.id}` : undefined}
+                    transition={{ layout: FLY }}
+                    className="max-w-[90%] truncate text-[17px] font-medium tracking-[-0.01em]"
+                  >
+                    @{c.handle}
+                  </motion.span>
                 </CardStage>
-                <CardBody
-                  title={<span className="line-clamp-1">{c.title || c.label}</span>}
-                  description={<span className="line-clamp-2">{c.snippet || c.url}</span>}
-                  action={
-                    <Icon
-                      icon={on ? Tick02Icon : ArrowRight01Icon}
-                      size={16}
-                      className={cx("mr-1 shrink-0 transition-colors duration-250", on ? "text-foreground" : "text-muted")}
-                    />
-                  }
-                />
+                {/* The words arrive once the card has opened, so they are never seen stretched. */}
+                <motion.div
+                  layout
+                  initial={morph ? { opacity: 0, filter: "blur(4px)" } : false}
+                  animate={{ opacity: 1, filter: "blur(0px)" }}
+                  transition={{ duration: 0.5, ease: EASE, delay: morph ? 0.45 : 0 }}
+                >
+                  <CardBody
+                    title={<span className="line-clamp-1">{c.title || c.label}</span>}
+                    description={<span className="line-clamp-2">{c.snippet || c.url}</span>}
+                    action={
+                      <Icon
+                        icon={on ? Tick02Icon : ArrowRight01Icon}
+                        size={16}
+                        className={cx("mr-1 shrink-0 transition-colors duration-250", on ? "text-foreground" : "text-muted")}
+                      />
+                    }
+                  />
+                </motion.div>
               </Card>
             </motion.button>
           );

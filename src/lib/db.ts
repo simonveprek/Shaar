@@ -119,6 +119,8 @@ create table if not exists discoveries (
   created_at    timestamptz not null default now()
 );
 create index if not exists discoveries_user_idx on discoveries (user_id, created_at desc);
+-- Google results read per platform, so the search can say how much it went through.
+alter table discoveries add column if not exists scanned jsonb;
 `;
 
 // Postgres type ids: timestamptz, timestamp, int8. Timestamps come back as ISO strings and

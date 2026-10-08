@@ -34,6 +34,8 @@ export type DiscoveryRow = {
   status: "searching" | "ready" | "failed";
   apify_run_id: string | null;
   candidates: Candidate[];
+  /** Google results read per platform. Null until the search has finished. */
+  scanned: Record<string, number> | null;
   error: string | null;
   created_at: string;
 };
@@ -117,7 +119,13 @@ export async function syncDiscovery(row: DiscoveryRow): Promise<DiscoveryRow> {
   const { items } = await apify().dataset(run.defaultDatasetId).listItems({ clean: true, limit: 50 });
   const seen = new Set<string>();
   const candidates: Candidate[] = [];
-  for (const page of items as { organicResults?: { title?: string; url?: string; description?: string }[] }[]) {
+  const scanned: Record<string, number> = {};
+  type Page = { searchQuery?: { term?: string }; organicResults?: { title?: string; url?: string; description?: string }[] };
+  for (const page of items as Page[]) {
+    // Each page answers one query, and each query names the site it searched.
+    const term = page.searchQuery?.term ?? "";
+    const site = PROFILE_SITES.find((s) => term.includes(`site:${s.site}`));
+    if (site) scanned[site.platform] = (scanned[site.platform] ?? 0) + (page.organicResults?.length ?? 0);
     for (const result of page.organicResults ?? []) {
       const ref = result.url ? parseProfileUrl(result.url) : null;
       if (!ref) continue;
@@ -147,9 +155,9 @@ export async function syncDiscovery(row: DiscoveryRow): Promise<DiscoveryRow> {
   const failed = run.status !== "SUCCEEDED" && kept.length === 0;
   // Conditional on still searching, so two pollers can't both write. The loser re-reads the winner's result.
   const updated = await maybeOne<DiscoveryRow>(
-    `update discoveries set status = $1, candidates = $2::jsonb, error = $3
+    `update discoveries set status = $1, candidates = $2::jsonb, error = $3, scanned = $5::jsonb
      where id = $4 and status = 'searching' returning *`,
-    [failed ? "failed" : "ready", json(kept), failed ? `Search ${run.status}` : null, row.id],
+    [failed ? "failed" : "ready", json(kept), failed ? `Search ${run.status}` : null, row.id, json(scanned)],
   );
   return updated ?? getDiscovery(row.id, row.user_id);
 }
