@@ -207,7 +207,8 @@ src/
     schemas.ts            zod request-body schemas (shared by routes and docs)
     api-catalog.ts        list of every route → GET /api and /docs
     apify.ts / openai.ts / supabase.ts   lazily created clients
-  app/docs/               the /docs page
+  app/docs/               the /docs page, built with the Fragms kit
+  components/ui, components/fragms, components/bits.tsx   Fragms Personal design system (see AGENTS.md, UI)
 ```
 
 Conventions:

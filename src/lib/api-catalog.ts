@@ -88,7 +88,7 @@ export const routes: RouteDoc[] = [
     path: "/api/connectors",
     group: "Connectors",
     summary: "List supported platforms",
-    description: "Use this to build the \"add a source\" form: `targetHint` is the input placeholder, `notes` are caveats to show.",
+    description: "Builds the add a source form. Use `targetHint` as the placeholder and show `notes` as a caveat.",
     auth: "none",
     response: {
       status: 200,
@@ -123,7 +123,7 @@ export const routes: RouteDoc[] = [
     group: "Connectors",
     summary: "Scrape one platform profile",
     description:
-      "Without `jobId` this starts a new research job for one profile. With `jobId` it adds the profile to an existing job; the job goes back to `scraping` and the persona is rebuilt when it finishes.",
+      "Without `jobId` this starts a new research job for one profile. With `jobId` it adds the profile to that job. The job goes back to `scraping` and the persona is rebuilt when it finishes.",
     auth: "user",
     params: { platform: "Platform key" },
     body: RunConnector,
@@ -138,7 +138,7 @@ export const routes: RouteDoc[] = [
     group: "Research",
     summary: "Start a research job",
     description:
-      "Starts one Apify run per actor for each target (some platforms use a profile actor and a posts actor). Scraping takes a few minutes; then poll `GET /api/research/:id` until `job.status` is `ready` or `failed`.",
+      "Starts the Apify runs for every target. Some platforms use one actor for the profile and one for posts. Scraping takes a few minutes. Then poll `GET /api/research/:id` until `job.status` is `ready` or `failed`.",
     auth: "user",
     body: CreateJob,
     bodyExample: {
@@ -169,7 +169,7 @@ export const routes: RouteDoc[] = [
     group: "Research",
     summary: "Job progress, runs and persona",
     description:
-      "The main polling endpoint (every ~5 s). Each call also moves the job forward: it pulls in finished Apify runs and checks persona generation. `job.status`: scraping → analyzing → ready | failed.",
+      "Poll this every 5 seconds or so. Each call also moves the job forward by pulling in finished Apify runs and checking on the persona. `job.status` goes from `scraping` to `analyzing` to `ready` or `failed`.",
     auth: "user",
     params: { id: "Job ID" },
     response: {
@@ -312,7 +312,7 @@ export const routes: RouteDoc[] = [
     group: "AI & voice",
     summary: "Streaming chat with the research assistant",
     description:
-      "Streams the reply as plain text chunks. With `jobId`, answers are grounded in that job's persona (\"what does she think about X?\").",
+      "Streams the reply as plain text. With `jobId` the answers come from that job's persona, so you can ask what they think about something.",
     auth: "user",
     body: Chat,
     bodyExample: { jobId: "8f0c…", messages: [{ role: "user", content: "What topics does she post about most?" }] },
