@@ -25,7 +25,9 @@ export function handle<Args extends unknown[]>(fn: (...args: Args) => Promise<Re
         return Response.json({ error: "Invalid request", details: z.treeifyError(err) }, { status: 400 });
       }
       console.error(err);
-      return Response.json({ error: "Internal server error" }, { status: 500 });
+      // In development the real message helps whoever is debugging; deployed builds stay vague.
+      const detail = process.env.NODE_ENV !== "production" && err instanceof Error ? err.message : undefined;
+      return Response.json({ error: "Internal server error", details: detail }, { status: 500 });
     }
   };
 }

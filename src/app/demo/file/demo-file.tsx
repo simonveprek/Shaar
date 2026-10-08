@@ -33,7 +33,7 @@ export function DemoFile({ dossier }: { dossier: Dossier }) {
     return () => clearInterval(id);
   }, []);
 
-  if (elapsed > OPEN_AT) return <DossierView dossier={dossier} sample />;
+  if (elapsed > OPEN_AT) return <DossierView dossier={dossier} sample interview={{ href: "/demo/interview", emphasis: true }} />;
 
   const sources: Source[] = STEPS.map((s) => ({
     platform: s.platform,

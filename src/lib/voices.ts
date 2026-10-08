@@ -21,6 +21,9 @@ const VOICES: Record<"male" | "female", Record<Age, string>> = {
   },
 };
 
+/** Used when the persona gives no gender and ELEVENLABS_DEFAULT_VOICE_ID is not set: Bella, professional and warm. */
+export const FALLBACK_VOICE = VOICES.female.middle_aged;
+
 /** A stock voice matching the persona's gender and age, or null when the persona gives no gender. */
 export function pickVoice(voice: PersonaProfile["voice"]): string | null {
   const gender = voice.gender_presentation;

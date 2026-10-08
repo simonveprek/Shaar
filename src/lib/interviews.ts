@@ -1,10 +1,10 @@
 import { json, maybeOne, one } from "./db";
-import { need } from "./env";
+import { env } from "./env";
 import { HttpError, notFound } from "./http";
 import { createPersonaAgent, getConversation, getConversationToken, getSignedUrl, updatePersonaAgent } from "./elevenlabs";
 import type { PersonaRow } from "./research";
 import type { Difficulty } from "./candidate";
-import { pickVoice } from "./voices";
+import { FALLBACK_VOICE, pickVoice } from "./voices";
 
 export type InterviewRow = {
   id: string;
@@ -64,8 +64,10 @@ export async function ensureAgent(persona: PersonaRow, voiceId?: string): Promis
   const voice =
     voiceId ??
     persona.voice_id ??
-    (persona.candidate ? pickVoice(persona.profile.voice) : null) ??
-    need("ELEVENLABS_DEFAULT_VOICE_ID", "A default voice");
+    // Every persona, practice candidate or real person, gets a stock voice matching its gender and age.
+    pickVoice(persona.profile.voice) ??
+    env().ELEVENLABS_DEFAULT_VOICE_ID ??
+    FALLBACK_VOICE;
 
   if (persona.elevenlabs_agent_id && persona.voice_id === voice && !persona.candidate) return persona;
 
