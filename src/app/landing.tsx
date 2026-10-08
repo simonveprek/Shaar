@@ -55,12 +55,12 @@ export function Landing() {
           type="button"
           onClick={reset}
           title="Someone else"
-          className="shimmer relative max-w-[16ch] cursor-pointer text-center text-[clamp(2rem,6vw,4.5rem)] leading-none font-medium tracking-[-0.04em] break-words"
+          className="shimmer relative max-w-[16ch] cursor-pointer text-center text-[clamp(1.5rem,5vw,3.5rem)] leading-none font-medium tracking-[-0.04em] break-words"
         >
           {sent}
         </button>
       ) : (
-        <form onSubmit={submit} className="relative w-full max-w-[640px]">
+        <form onSubmit={submit} className="relative w-full max-w-[920px]">
           <label htmlFor="subject" className="sr-only">
             Full name
           </label>
@@ -74,8 +74,8 @@ export function Landing() {
             enterKeyHint="search"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Name"
-            className="w-full bg-transparent text-center text-[clamp(2rem,6vw,4.5rem)] leading-none font-medium tracking-[-0.04em] caret-foreground outline-none placeholder:text-foreground/15 focus-visible:outline-none"
+            placeholder="Who are we looking for?"
+            className="w-full bg-transparent text-center text-[clamp(1.5rem,5vw,3.5rem)] leading-none font-medium tracking-[-0.04em] caret-foreground outline-none placeholder:text-foreground/15 focus-visible:outline-none"
           />
         </form>
       )}
