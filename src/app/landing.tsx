@@ -16,8 +16,8 @@ import { cx, EASE } from "@/components/ui";
  *   0.5  the mark comes into focus
  *   0.8  the question rises word by word
  *   1.6  the motto
- * On a name: the field dissolves, the name arrives as a ghost and comes into
- * focus, then it is confirmed and the light answers.
+ * On a name: it stays where it was typed, the field locks, and after a beat
+ * it is confirmed and the light answers.
  */
 
 /** Cold greys, never pure white, so the light reads as a screen left on in an empty room. */
@@ -157,18 +157,12 @@ export function Landing() {
         Beware the Spectator
       </motion.p>
 
-      <AnimatePresence mode="wait" initial={false}>
+      {/* The typed name never leaves. On Enter the field locks in place and is confirmed where it stands. */}
+      <div className="relative grid w-full max-w-[920px] place-items-center">
         {sent ? (
-          <motion.div key="subject" exit={dissolve} className="relative">
-            <Subject name={sent} reduce={reduce} onConfirmed={() => (sentAt.current = performance.now())} onReset={reset} />
-          </motion.div>
+          <Subject name={sent} reduce={reduce} onConfirmed={() => (sentAt.current = performance.now())} onReset={reset} />
         ) : (
-          <motion.form
-            key="ask"
-            onSubmit={submit}
-            exit={dissolve}
-            className="relative grid w-full max-w-[920px] place-items-center"
-          >
+          <form onSubmit={submit} className="col-start-1 row-start-1 grid w-full place-items-center">
             <label htmlFor="subject" className="sr-only">
               {QUESTION}
             </label>
@@ -188,9 +182,9 @@ export function Landing() {
               )}
             />
             <AnimatePresence>{!name && <Question key="question" first={!arrived} reduce={reduce} />}</AnimatePresence>
-          </motion.form>
+          </form>
         )}
-      </AnimatePresence>
+      </div>
     </main>
   );
 }
@@ -238,8 +232,8 @@ function Question({ first, reduce }: { first: boolean; reduce: boolean }) {
 }
 
 /**
- * The name being confirmed. It arrives as a ghost and comes into focus all at
- * once, then "Confirmed" settles underneath.
+ * The name, confirmed where it was typed. It does not move or change. After a
+ * beat "Confirmed" settles underneath, the light answers and a slow shimmer starts.
  */
 function Subject({
   name,
@@ -253,28 +247,32 @@ function Subject({
   onReset: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(reduce);
-  const confirm = () => {
-    setConfirmed(true);
-    onConfirmed();
-  };
   useEffect(() => {
-    if (reduce) onConfirmed();
+    if (reduce) {
+      onConfirmed();
+      return;
+    }
+    const id = setTimeout(() => {
+      setConfirmed(true);
+      onConfirmed();
+    }, 350);
+    return () => clearTimeout(id);
     // Once, when the name arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <button type="button" onClick={onReset} title="Someone else" aria-label={`${name}, confirmed`} className="relative cursor-pointer">
-      <motion.span
-        aria-hidden="true"
-        className={cx("block max-w-[16ch] text-center break-words", TYPE, confirmed && "shimmer")}
-        initial={reduce ? false : { opacity: 0.2, filter: "blur(4px)" }}
-        animate={{ opacity: 1, filter: "blur(0px)" }}
-        transition={{ duration: 0.9, ease: EASE, delay: 0.3 }}
-        onAnimationComplete={reduce ? undefined : confirm}
-      >
+    <button
+      type="button"
+      onClick={onReset}
+      title="Someone else"
+      aria-label={`${name}, confirmed`}
+      className="relative col-start-1 row-start-1 max-w-full cursor-pointer"
+    >
+      {/* Same type and centring as the field, so the swap from input to text cannot be seen. */}
+      <span aria-hidden="true" className={cx("block truncate text-center", TYPE, confirmed && "shimmer")}>
         {name}
-      </motion.span>
+      </span>
       <motion.span
         className="absolute top-full left-1/2 mt-7 -translate-x-1/2 font-mono text-[10.5px] tracking-[0.28em] whitespace-nowrap text-muted uppercase"
         initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
