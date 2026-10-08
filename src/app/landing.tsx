@@ -25,6 +25,13 @@ const ASH: AuraColors = ["#c8c8cc", "#5c5c63", "#9a9aa1", "#3a3a40"];
 
 const QUESTION = "Who are we looking for?";
 const RESTING = 0.22;
+
+/** How hard each keystroke and each bit of pointer travel stirs the light, and how fast it settles. */
+const STIR = { key: 0.14, pointer: 0.00035, max: 0.45, settle: 2.2 };
+
+/** Three slow waves out of phase, so the light swells and ebbs without ever repeating. 0 to 1. */
+const think = (t: number) =>
+  0.5 + 0.5 * (0.5 * Math.sin(t * 0.9) + 0.3 * Math.sin(t * 1.7 + 1.3) + 0.2 * Math.sin(t * 2.9 + 0.4));
 const AT = { light: 0, mark: 0.5, question: 0.8, motto: 1.6 };
 
 /** How quickly the Spectator's gaze catches the pointer. Lower trails further behind. */
@@ -45,6 +52,11 @@ export function Landing() {
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const mountedAt = useRef<number | null>(null);
   const sentAt = useRef(-Infinity);
+  // What the user is doing to the light right now. Rises on input, settles on its own.
+  const stir = useRef({ energy: 0, at: 0, last: null as { x: number; y: number } | null });
+  const stirBy = (amount: number) => {
+    stir.current.energy = Math.min(STIR.max, stir.current.energy + amount);
+  };
   // The question rises word by word once. Coming back after a cleared field, it only fades in.
   const [arrived, setArrived] = useState(false);
 
@@ -78,20 +90,37 @@ export function Landing() {
     return () => cancelAnimationFrame(frame);
   }, [reduce]);
 
-  // Read every frame by the glow. Rises on arrival, rests, and flares once after a name.
+  // Read every frame by the glow. Rises on arrival, then thinks: it drifts on its own, stirs when you
+  // type or move, thinks harder once a name is confirmed, and flares once at the confirmation.
   const level = () => {
     const now = performance.now();
     const since = mountedAt.current === null ? 0 : (now - mountedAt.current) / 1000;
-    const rise = reduce ? RESTING : RESTING * (1 - Math.pow(1 - Math.min(1, since / 1.8), 3));
-    return Math.max(rise, 0.65 - (now - sentAt.current) / 3200);
+    const rise = reduce ? 1 : 1 - Math.pow(1 - Math.min(1, since / 1.8), 3);
+    const flare = 0.65 - (now - sentAt.current) / 3200;
+    if (reduce) return Math.max(RESTING, flare);
+
+    const state = stir.current;
+    const dt = state.at ? Math.min(0.1, (now - state.at) / 1000) : 0;
+    state.at = now;
+    state.energy *= Math.exp(-STIR.settle * dt);
+
+    const t = now / 1000;
+    const mind = sent ? think(t * 1.6) : think(t);
+    const drift = RESTING * (0.7 + 0.6 * mind) + (sent ? 0.1 * mind : 0);
+    return Math.max(rise * drift + state.energy, flare);
   };
 
   const look = (event: PointerEvent<HTMLElement>) => {
     if (event.pointerType !== "mouse") return;
     pointer.current = { x: event.clientX, y: event.clientY };
+    // Faster movement stirs the light more.
+    const last = stir.current.last;
+    if (last) stirBy(Math.hypot(event.clientX - last.x, event.clientY - last.y) * STIR.pointer);
+    stir.current.last = { x: event.clientX, y: event.clientY };
     if (grid.current) grid.current.dataset.on = "";
   };
   const lookAway = () => {
+    stir.current.last = null;
     if (grid.current) delete grid.current.dataset.on;
   };
 
@@ -143,7 +172,7 @@ export function Landing() {
               transition: { duration: 1.8, ease: EASE, delay: AT.light },
             })}
       >
-        <Aura palette={ASH} level={level} intensity={1.4} speed={sent ? 0.3 : 0.08} radius={0} className="h-full w-full" />
+        <Aura palette={ASH} level={level} intensity={1.5} speed={reduce ? 0 : sent ? 1.1 : 0.6} radius={0} className="h-full w-full" />
       </motion.div>
 
       <motion.div className="absolute top-6 left-6 sm:top-8 sm:left-8" {...enter(AT.mark, { opacity: 0, filter: "blur(10px)", y: 6 })}>
@@ -174,7 +203,10 @@ export function Landing() {
               spellCheck={false}
               enterKeyHint="search"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                stirBy(STIR.key);
+              }}
               className={cx(
                 "col-start-1 row-start-1 w-full bg-transparent text-center outline-none focus-visible:outline-none",
                 TYPE,
