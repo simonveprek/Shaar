@@ -35,7 +35,7 @@ const MAX_CELLS = 60;
 const DRIP_MS = 3600;
 
 /** How hard each landed record stirs the light, and how fast it settles. */
-const STIR = { record: 0.035, max: 0.4, settle: 1.6, resting: 0.26 };
+const STIR = { record: 0.014, max: 0.2, settle: 1.6, resting: 0.26 };
 
 const LABEL: Record<string, string> = {
   instagram: "Instagram",
@@ -87,7 +87,6 @@ export function Collecting({
   };
 
   const settled = sources.length > 0 && sources.every((s) => s.status === "done" || s.status === "failed");
-  const total = sources.reduce((sum, s) => sum + s.found, 0);
   const caption = problem || (failed ? "Nothing could be collected" : settled ? "Collected" : "Collecting public records");
 
   useEffect(() => {
@@ -170,7 +169,7 @@ export function Collecting({
                   <Icon icon={CornerDownLeftIcon} size={14} />
                 </Kbd>
                 <span className={cx(CAPTION, "transition-colors duration-150 group-hover:text-foreground")}>
-                  {settled ? "Enter to open the file" : `Open with ${total} records`}
+                  {settled ? "Enter to open the file" : "Enter to open it now"}
                 </span>
               </motion.button>
             )}
@@ -196,13 +195,13 @@ function SourceRow({ source, reduce, onRecord }: { source: Source; reduce: boole
   const done = source.status === "done";
   const failed = source.status === "failed";
   const waiting = source.status === "waiting";
-  // Cells already on screen when this render began. Only the ones after it animate in.
-  const landed = useRef(cells);
-  useEffect(() => {
-    landed.current = cells;
-  });
-
-  const note = failed ? "Unavailable" : waiting && !shown ? "Waiting" : shown;
+  const note = failed
+    ? "Unavailable"
+    : done && !source.found
+      ? "Nothing public"
+      : waiting && !shown
+        ? "Waiting"
+        : shown;
 
   return (
     <motion.li
@@ -215,7 +214,7 @@ function SourceRow({ source, reduce, onRecord }: { source: Source; reduce: boole
         <span className={cx(CAPTION, done && "text-foreground", "transition-colors duration-250 ease-smooth")}>
           {LABEL[source.platform] ?? source.platform}
         </span>
-        <span className={cx("text-caption tabular-nums", failed || waiting ? "text-muted" : "text-foreground")}>{note}</span>
+        <span className={cx("text-caption tabular-nums", typeof note === "string" ? "text-muted" : "text-foreground")}>{note}</span>
       </div>
       <div
         role="img"
@@ -226,7 +225,7 @@ function SourceRow({ source, reduce, onRecord }: { source: Source; reduce: boole
           <motion.span
             key={i}
             className="size-1.5 rounded-[2px] bg-foreground"
-            initial={reduce || i < landed.current ? false : { opacity: 0, scale: 0.3, filter: "blur(3px)" }}
+            initial={reduce ? false : { opacity: 0, scale: 0.3, filter: "blur(3px)" }}
             animate={{
               opacity: done ? 1 : 0.42,
               scale: 1,
@@ -262,29 +261,28 @@ function Cursor({ waiting, reduce }: { waiting: boolean; reduce: boolean }) {
  */
 function useDrip(target: number, reduce: boolean, onStep: () => void) {
   const [shown, setShown] = useState(reduce ? target : 0);
+  const count = useRef(shown);
   const step = useRef(onStep);
   useEffect(() => {
     step.current = onStep;
   });
 
   useEffect(() => {
-    if (reduce || target < shown) {
+    if (reduce || target < count.current) {
       // Counts can shrink a little once a dataset is cleaned up on ingest; follow without animating.
+      count.current = target;
       setShown(target);
       return;
     }
-    if (target === shown) return;
-    const every = Math.max(28, Math.min(160, DRIP_MS / (target - shown)));
+    if (target === count.current) return;
+    const every = Math.max(28, Math.min(160, DRIP_MS / (target - count.current)));
     const id = setInterval(() => {
-      setShown((n) => {
-        if (n >= target) return n;
-        step.current();
-        return n + 1;
-      });
+      if (count.current >= target) return clearInterval(id);
+      count.current += 1;
+      setShown(count.current);
+      step.current();
     }, every);
     return () => clearInterval(id);
-    // Restart the drip only when the target moves, not on every record it adds.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, reduce]);
 
   return shown;

@@ -1,8 +1,9 @@
 "use client";
 
+import { useReducedMotion } from "framer-motion";
 import { useEffect, useState } from "react";
 import type { Dossier } from "@/lib/dossier";
-import { Collecting, type Source } from "../../dossier/[id]/live";
+import { Collecting, type Source } from "../../dossier/[id]/collecting";
 import { DossierView } from "../../dossier/dossier-view";
 
 /*
@@ -16,9 +17,11 @@ const STEPS: { platform: string; items: number; at: number }[] = [
   { platform: "reddit", items: 37, at: 2900 },
   { platform: "x", items: 108, at: 3800 },
 ];
-const OPEN_AT = 4700;
+/** Leaves time for the last source's records to drip in and settle before the file opens. */
+const OPEN_AT = 6200;
 
 export function DemoFile({ dossier }: { dossier: Dossier }) {
+  const reduce = useReducedMotion() ?? false;
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const start = performance.now();
@@ -35,7 +38,19 @@ export function DemoFile({ dossier }: { dossier: Dossier }) {
   const sources: Source[] = STEPS.map((s) => ({
     platform: s.platform,
     status: elapsed >= s.at ? "done" : "collecting",
-    items: s.items,
+    items: elapsed >= s.at ? s.items : 0,
+    // Records are found steadily until the source is done, like a live dataset filling up.
+    found: Math.round(s.items * Math.min(1, elapsed / s.at)),
   }));
-  return <Collecting name={dossier.subject.name} sources={sources} message="Collecting public records" busy />;
+  return (
+    <Collecting
+      name={dossier.subject.name}
+      sources={sources}
+      failed={false}
+      problem=""
+      canOpen={false}
+      reduce={reduce}
+      onOpen={() => {}}
+    />
+  );
 }
