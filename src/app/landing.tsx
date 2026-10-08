@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent, type PointerEvent } from "react";
 import { Aura, type AuraColors } from "@/components/fragms";
 import { Logo } from "@/components/logo";
+import { cx } from "@/components/ui";
 
 /*
  * The front door. Black, one field for a name, and a cold glow along the
@@ -19,7 +20,20 @@ export function Landing() {
   const [name, setName] = useState("");
   const [sent, setSent] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const grid = useRef<HTMLDivElement>(null);
   const sentAt = useRef(-Infinity);
+
+  // The grid shows only around the pointer. Its position is written straight to CSS, so moving never re-renders.
+  const reveal = (event: PointerEvent<HTMLElement>) => {
+    const node = grid.current;
+    if (!node || event.pointerType !== "mouse") return;
+    node.style.setProperty("--x", `${event.clientX}px`);
+    node.style.setProperty("--y", `${event.clientY}px`);
+    node.dataset.on = "";
+  };
+  const hide = () => {
+    if (grid.current) delete grid.current.dataset.on;
+  };
 
   // Read every frame by the glow. Still at rest, one flare after sending.
   const level = () => Math.max(RESTING, 0.65 - (performance.now() - sentAt.current) / 3200);
@@ -42,7 +56,21 @@ export function Landing() {
     <main
       className="dark relative grid min-h-svh place-items-center overflow-hidden bg-background px-6 text-foreground selection:bg-foreground selection:text-background"
       onKeyDown={(event) => event.key === "Escape" && sent && reset()}
+      onPointerMove={reveal}
+      onPointerLeave={hide}
     >
+      {/* A grid that is only there where the pointer is, fading out over a few cells. */}
+      <div
+        ref={grid}
+        aria-hidden="true"
+        className={cx(
+          "pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-150 ease-smooth data-[on]:opacity-100 data-[on]:duration-250",
+          "[background-image:linear-gradient(to_right,color-mix(in_oklab,var(--foreground)_14%,transparent)_1px,transparent_1px),linear-gradient(to_bottom,color-mix(in_oklab,var(--foreground)_14%,transparent)_1px,transparent_1px)]",
+          "[background-size:56px_56px] [background-position:center_center]",
+          "[mask-image:radial-gradient(240px_circle_at_var(--x,50%)_var(--y,50%),black,transparent)]",
+        )}
+      />
+
       {/* A band wider than the screen, so only its bottom edge glows. The mask fades its top away. */}
       <div
         aria-hidden="true"
