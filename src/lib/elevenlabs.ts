@@ -1,14 +1,15 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { env } from "./env";
+import { envVar } from "./env";
 import { HttpError } from "./http";
 import { agentSystemPrompt, type PersonaProfile } from "./persona";
+import { FEELING_TOOL, FEELINGS, type CandidateBrief } from "./candidate";
 
 const BASE_URL = "https://api.elevenlabs.io";
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { "xi-api-key": env().ELEVENLABS_API_KEY, "Content-Type": "application/json", ...init.headers },
+    headers: { "xi-api-key": envVar("ELEVENLABS_API_KEY"), "Content-Type": "application/json", ...init.headers },
   });
   if (!res.ok) {
     const body = await res.text();
@@ -17,32 +18,82 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-function agentConfig(profile: PersonaProfile, voiceId: string) {
+/** Client tool the candidate agent calls silently; the browser handles it (see FEELING_TOOL). */
+const feelingToolConfig = {
+  type: "client",
+  name: FEELING_TOOL,
+  description:
+    "Silently report how you, the candidate, currently feel about the interview. Call it whenever your feeling noticeably changes. Never mention it out loud.",
+  expects_response: false,
+  parameters: {
+    type: "object",
+    properties: {
+      feeling: { type: "string", enum: [...FEELINGS], description: "Your current feeling." },
+      intensity: { type: "number", description: "How strong the feeling is, 1 (slight) to 5 (very strong)." },
+      reason: { type: "string", description: "Short reason, e.g. 'they asked about my open-source project'." },
+    },
+    required: ["feeling", "intensity", "reason"],
+  },
+};
+
+/**
+ * `feelingTool: false` leaves out reportFeeling, for clients that can't handle it (e.g. the ElevenLabs test page).
+ * `publicAccess: true` lets anyone with the agent ID call it (test agents only); otherwise calls need the
+ * conversation token or signed URL this backend hands out.
+ */
+export type AgentOptions = { feelingTool?: boolean; publicAccess?: boolean };
+
+function agentConfig(profile: PersonaProfile, voiceId: string, candidate: CandidateBrief | null, opts: AgentOptions) {
+  const feelingTool = opts.feelingTool ?? true;
+  const prompt = { prompt: agentSystemPrompt(profile, candidate, { feelingTool }), llm: envVar("ELEVENLABS_AGENT_LLM") };
   return {
     name: `Persona: ${profile.display_name}`.slice(0, 100),
-    tags: ["projstalker", "persona"],
+    tags: candidate ? ["projstalker", "persona", "candidate"] : ["projstalker", "persona"],
     conversation_config: {
-      agent: {
-        first_message: profile.interview_first_message,
-        language: "en",
-        prompt: { prompt: agentSystemPrompt(profile), llm: env().ELEVENLABS_AGENT_LLM },
-      },
-      tts: { voice_id: voiceId, model_id: env().ELEVENLABS_TTS_MODEL },
+      agent: candidate
+        ? {
+            // The candidate just joins the call; HR leads the interview.
+            first_message: "Hi, hello? Can you hear me okay?",
+            language: "en",
+            // `tools` inline is deprecated in favour of `tool_ids`, but still accepted and keeps the agent self-contained.
+            // Empty lists also remove a previously added tool on update.
+            prompt: feelingTool ? { ...prompt, tools: [feelingToolConfig] } : { ...prompt, tools: [], tool_ids: [] },
+            dynamic_variables: { dynamic_variable_placeholders: { difficulty: "realistic" } },
+          }
+        : { first_message: profile.interview_first_message, language: "en", prompt },
+      tts: { voice_id: voiceId, model_id: envVar("ELEVENLABS_TTS_MODEL") },
+      // Give HR time to think before the candidate fills the silence, and cap the cost of a forgotten call.
+      ...(candidate && { turn: { turn_timeout: 10 }, conversation: { max_duration_seconds: 900 } }),
     },
+    platform_settings: { auth: { enable_auth: !opts.publicAccess } },
   };
 }
 
 /** Creates a private ElevenLabs agent that plays the persona. The prompt stays server-side. */
-export async function createPersonaAgent(profile: PersonaProfile, voiceId: string): Promise<string> {
+export async function createPersonaAgent(
+  profile: PersonaProfile,
+  voiceId: string,
+  candidate: CandidateBrief | null = null,
+  opts: AgentOptions = {},
+): Promise<string> {
   const { agent_id } = await call<{ agent_id: string }>("/v1/convai/agents/create", {
     method: "POST",
-    body: JSON.stringify(agentConfig(profile, voiceId)),
+    body: JSON.stringify(agentConfig(profile, voiceId, candidate, opts)),
   });
   return agent_id;
 }
 
-export async function updatePersonaAgent(agentId: string, profile: PersonaProfile, voiceId: string): Promise<void> {
-  await call(`/v1/convai/agents/${agentId}`, { method: "PATCH", body: JSON.stringify(agentConfig(profile, voiceId)) });
+export async function updatePersonaAgent(
+  agentId: string,
+  profile: PersonaProfile,
+  voiceId: string,
+  candidate: CandidateBrief | null = null,
+  opts: AgentOptions = {},
+): Promise<void> {
+  await call(`/v1/convai/agents/${agentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(agentConfig(profile, voiceId, candidate, opts)),
+  });
 }
 
 export async function deleteAgent(agentId: string): Promise<void> {
@@ -87,8 +138,8 @@ export async function textToSpeech(text: string, voiceId: string, modelId?: stri
     `${BASE_URL}/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_44100_128`,
     {
       method: "POST",
-      headers: { "xi-api-key": env().ELEVENLABS_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ text, model_id: modelId ?? env().ELEVENLABS_TTS_MODEL }),
+      headers: { "xi-api-key": envVar("ELEVENLABS_API_KEY"), "Content-Type": "application/json" },
+      body: JSON.stringify({ text, model_id: modelId ?? envVar("ELEVENLABS_TTS_MODEL") }),
     },
   );
   if (!res.ok || !res.body) {

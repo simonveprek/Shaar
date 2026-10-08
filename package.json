@@ -7,9 +7,12 @@
     "build": "next build",
     "start": "next start -p 4000",
     "typecheck": "next typegen && tsc --noEmit",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:candidates": "tsx --env-file-if-exists=.env.local scripts/seed-candidates.ts",
+    "try:agent": "tsx --env-file-if-exists=.env.local scripts/try-agent.ts"
   },
   "dependencies": {
+    "@elevenlabs/react": "^1.16.0",
     "@supabase/supabase-js": "^2.117.3",
     "apify-client": "^2.25.0",
     "next": "16.4.0",
@@ -24,6 +27,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

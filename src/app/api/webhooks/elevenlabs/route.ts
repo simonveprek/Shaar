@@ -1,6 +1,7 @@
 import { env } from "@/lib/env";
 import { handle, maybe } from "@/lib/http";
 import { verifyWebhookSignature } from "@/lib/elevenlabs";
+import { startFeedback } from "@/lib/feedback";
 import { applyConversation } from "@/lib/interviews";
 import { db } from "@/lib/supabase";
 
@@ -37,6 +38,8 @@ export const POST = handle(async (req: Request) => {
   );
   if (!interview) return Response.json({ ok: true, ignored: "unknown conversation" });
 
-  await applyConversation(interview.id, { ...event.data, status: event.data.status || "done" });
+  const updated = await applyConversation(interview.id, { ...event.data, status: event.data.status || "done" });
+  // Starting is quick (OpenAI runs it in the background); GET /api/interviews/:id collects the result.
+  await startFeedback(updated);
   return Response.json({ ok: true });
 });

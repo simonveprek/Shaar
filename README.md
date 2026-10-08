@@ -49,9 +49,11 @@ All routes except webhooks need `Authorization: Bearer <supabase access token>`
 | GET | `/api/research/:id/items` | Scraped profiles/posts: `?platform=&kind=profile\|post&limit=&offset=&raw=1` |
 | POST | `/api/research/:id/persona` | Regenerate the persona |
 | GET | `/api/personas/:id` | Persona profile |
-| POST | `/api/personas/:id/interviews` | Start an interview: `{ voiceId?, transport?: "webrtc" \| "websocket" }` |
+| POST | `/api/personas/:id/interviews` | Start an interview: `{ voiceId?, transport?: "webrtc" \| "websocket", difficulty? }` |
 | GET | `/api/personas/:id/interviews` | Past interviews |
-| GET | `/api/interviews/:id` | Interview transcript and analysis |
+| GET | `/api/interviews/:id` | Interview transcript, analysis and candidate feedback |
+| POST | `/api/interviews/:id/feelings` | Candidate's feelings during the call (from the `reportFeeling` client tool) |
+| POST | `/api/interviews/:id/feedback` | Regenerate the candidate's feedback |
 | POST | `/api/ai/chat` | Streamed chat (plain text): `{ messages: [{ role, content }], jobId? }` |
 | POST | `/api/voice/tts` | Text to speech (`audio/mpeg`): `{ text, voiceId?, modelId? }` |
 | POST | `/api/webhooks/apify` | Apify run finished (secret in query string) |

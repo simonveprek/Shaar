@@ -15,6 +15,33 @@
 
 ---
 
+## Stav implementace (první verze, větev `feature/interview-simulator`)
+
+| Co | Stav |
+|---|---|
+| Migrace (`personas.candidate`, sloupce feedbacku v `interviews`) | ✅ napsaná, ⏳ **nespuštěná** |
+| `CandidateBrief` + HR-mode prompt (`src/lib/candidate.ts`, `agentSystemPrompt`) | ✅ |
+| Agent: první věta, `reportFeeling` client tool, `{{difficulty}}`, turn timeout 10 s, max 15 min | ✅ (ověřit na živém agentovi) |
+| `difficulty` v `POST /api/personas/:id/interviews` + `session.dynamicVariables` | ✅ |
+| Feedback (`src/lib/feedback.ts`): background OpenAI, validace citací, talk ratio | ✅ |
+| `POST /api/interviews/:id/feelings`, `POST /api/interviews/:id/feedback` | ✅ |
+| 3 fiktivní kandidáti + `npm run seed:candidates` | ✅ (`--check` prošel) |
+| `api-catalog.ts`, `be.md`, README | ✅ |
+| `typecheck`, `lint`, `build` | ✅ |
+| Výběr hlasu podle persony (`voices.ts`) | ✅ stock hlasy podle pohlaví a věku |
+| Call UI ve stylu Google Meet (`src/components/meet/`, test na `/meet`) | ✅ lobby, hovor, titulky, přepis, nálada kandidáta, obrazovka po odchodu |
+| Agenti chránění tokenem (`enable_auth`), testovací agenti veřejní | ✅ |
+| Hlasový test s agentem (`npm run try:agent`) + textová simulace | ✅ ověřeno na Alexi Novákovi |
+| Návod na nasazení a napojení | ✅ [interview-integration.md](interview-integration.md) |
+| Hodnocení od kandidáta v Meet UI po zavěšení (`loadFeedback`) | ✅ + lokální `/api/dev/feedback` pro test bez databáze |
+| Hlas striktně muž/žena podle `voice.gender_presentation` z OpenAI | ✅ |
+| Kompletní dokumentace feature | ✅ [interview-simulator.md](interview-simulator.md) |
+| Napojení na scraping (generování `candidate` z dat) | ❌ až bude data stack hotový |
+
+**Jak to rozjet:** spustit migraci → `npm run seed:candidates -- --user <email>` → `POST /api/personas/:id/interviews` s `{ "difficulty": "realistic" }` → hovor → `GET /api/interviews/:id`, dokud `feedback_status` není `ready`.
+
+---
+
 ## 1. Co už existuje a co přidávám
 
 ### Už hotové (nesahat, jen použít)
@@ -43,10 +70,10 @@
 
 ```
              (dnes)                                  (až bude scraping ready)
-  fixtures/candidates/*.json                    POST /api/research {targetRole, …}
+  fixtures/candidates/*.json                    POST /api/research + candidate krok
             │ npm run seed:candidates                     │ Apify → OpenAI
             ▼                                             ▼
-  research_jobs (ready) + personas (ready, profile.candidate vyplněné)
+  research_jobs (ready) + personas (ready, personas.candidate vyplněné)
             │
             ▼
   POST /api/personas/:id/interviews { difficulty, voiceId? }
@@ -68,13 +95,14 @@ Klíčové pravidlo z `be.md` platí i pro mě: **žádný request nesmí čekat
 
 ## 3. Datový model
 
-### 3.1 Kandidátská vrstva v `PersonaProfile`
+### 3.1 Kandidátská vrstva: `personas.candidate`
 
-`PersonaProfile` (`src/lib/persona.ts`) rozšířím o nullable objekt `candidate`. Je to strict structured output, takže pole musí být `nullable`, ne `optional`. Fixtures ho vyplní ručně. Až bude scraping hotový, vyplní ho OpenAI ve stejném běhu, který staví personu.
+**Rozhodnuto:** kandidátská vrstva je samostatný sloupec `personas.candidate` (jsonb, schéma `CandidateBrief` v `src/lib/candidate.ts`), **ne** součást `PersonaProfile`. Persona pipeline kolegy tak zůstává beze změny. Pole jsou `nullable`, ne `optional`, aby šlo schéma později použít i jako OpenAI structured output. Zatím ho plní fixtures. Až bude scraping hotový, vyplní ho OpenAI.
 
 ```ts
-candidate: z.object({
+CandidateBrief = z.object({
   target_role: z.string(),                 // "Senior Frontend Engineer"
+  job_description: z.string().nullable(),
   career_summary: z.string(),              // 2–3 věty, ze kterých agent mluví o kariéře
   experience: z.array(z.object({ company: z.string(), title: z.string(), period: z.string().nullable(), highlights: z.array(z.string()) })),
   projects: z.array(z.object({ name: z.string(), description: z.string(), tech: z.array(z.string()) })),
@@ -88,21 +116,18 @@ candidate: z.object({
   })),
   questions_for_interviewer: z.array(z.string()),
   invented: z.array(z.string()),           // co není podložené daty (u fixtures všechno označené)
-}).nullable()
+})
 ```
-
-> ⚠️ `persona.ts` patří do společné části. Změnu schématu a promptu je potřeba **domluvit s autorem persona pipeline**. Druhá varianta je samostatný sloupec `personas.candidate`, kdyby kolega nechtěl měnit `PersonaProfile`. Kód kolem je v obou variantách stejný.
 
 `hidden_facts` jsou jádro tréninkové hodnoty: dobrý interviewer je z kandidáta dostane, špatný ne. Feedback pak ukáže, co zůstalo neodhaleno.
 
-### 3.2 Migrace `supabase/migrations/20261009000000_interview_feedback.sql`
+### 3.2 Migrace `supabase/migrations/20261009000000_interview_simulator.sql`
 
-Nová migrace, žádnou existující neupravuju:
+Nová migrace, žádnou existující neupravuju. **Zatím není spuštěná** proti sdílenému Supabase projektu.
 
 ```sql
-alter table public.research_jobs
-  add column target_role text,
-  add column job_description text;
+alter table public.personas
+  add column candidate jsonb;
 
 alter table public.interviews
   add column difficulty text not null default 'realistic'
@@ -147,11 +172,12 @@ export const CandidateFeedback = z.object({
 | Soubor | Změna |
 |---|---|
 | `supabase/migrations/2026100900…_interview_feedback.sql` | nové sloupce (3.2) |
-| `src/lib/persona.ts` | `candidate` v `PersonaProfile`, úprava `SYSTEM_PROMPT` (kandidátská vrstva, nic citlivého), `agentSystemPrompt` rozšířený o HR-mode blok (kap. 5) |
+| `src/lib/candidate.ts` *(nový)* | `CandidateBrief`, `Difficulty`, HR-mode blok promptu (kap. 5) |
+| `src/lib/persona.ts` | `agentSystemPrompt(profile, candidate?)` přidá HR-mode blok; `PersonaProfile` ani `SYSTEM_PROMPT` se nemění |
 | `src/lib/elevenlabs.ts` | `agentConfig`: client tool `reportFeeling`, delší turn timeout, max délka hovoru |
 | `src/lib/interviews.ts` | `startInterview` přijme `difficulty`, uloží ho a vrátí `session.dynamicVariables`. `syncInterview` po `done` zavolá `advanceFeedback` |
 | `src/lib/feedback.ts` *(nový)* | `CandidateFeedback`, `startFeedback` (claim + background response), `advanceFeedback` (poll + validace citací + talk ratio) |
-| `src/lib/schemas.ts` | `StartInterview.difficulty`, `ReportFeelings`, `CreateJob.targetRole/jobDescription` |
+| `src/lib/schemas.ts` | `StartInterview.difficulty`, `ReportFeelings` |
 | `src/app/api/interviews/[id]/feelings/route.ts` *(nový)* | `POST` uloží dávku pocitů |
 | `src/app/api/interviews/[id]/feedback/route.ts` *(nový)* | `POST` vynutí přegenerování feedbacku |
 | `src/app/api/webhooks/elevenlabs/route.ts` | po `applyConversation` spustí `startFeedback` |
@@ -168,7 +194,6 @@ export const CandidateFeedback = z.object({
 | `GET` | `/api/interviews/:id` | navíc posouvá feedback; vrací `feelings`, `feedback_status`, `feedback` |
 | `POST` | `/api/interviews/:id/feelings` | `{ events: [{ t, feeling, intensity, reason }] }` (frontend posílá v dávkách po ~10 s a při konci) |
 | `POST` | `/api/interviews/:id/feedback` | přegeneruje feedback (409, dokud hovor není `done`) |
-| `POST` | `/api/research` | body navíc `targetRole?`, `jobDescription?` (až pro napojení na scraping) |
 
 ### 4.2 Životní cyklus feedbacku (idempotentní)
 
@@ -203,7 +228,7 @@ Agent už existuje pro každou personu a `ensureAgent` ho vytvoří nebo aktuali
 
 > **Pozor:** když prompt obsahuje `{{difficulty}}`, musí ho dostat každý `startSession`. Jinak hovor spadne. Proto ho backend vrací rovnou v `session.dynamicVariables` a frontend jen předá celý objekt `session`. Přesné názvy polí pro client tool v `conversation_config.agent.prompt.tools` (hlavně „nečekat na odpověď“) ověřit proti aktuální API dokumentaci ElevenLabs.
 
-**HR-mode blok promptu** (přidá se, když `profile.candidate` existuje):
+**HR-mode blok promptu** (přidá se, když `personas.candidate` existuje):
 
 ```
 # This call
@@ -236,16 +261,16 @@ Stávající pravidla zůstávají: agent na upřímný dotaz přizná, že je A
 
 Dokud persona pipeline nevrací kandidáty, vytvářím je ručně:
 
-- `fixtures/candidates/<slug>.json` obsahuje `{ subjectName, targetRole, jobDescription, profile: PersonaProfile }`, kde `profile.candidate` je vyplněné. Připravím 2–3 **fiktivní** kandidáty s různými typy (sebevědomý senior, nervózní junior, kandidát s mezerou v CV). Hodí se zároveň jako „hero“ data pro demo.
+- `fixtures/candidates/<slug>.json` obsahuje `{ subjectName, notes, profile: PersonaProfile, candidate: CandidateBrief }`. Připravím 2–3 **fiktivní** kandidáty s různými typy (sebevědomý senior, nervózní junior, kandidát s mezerou v CV). Hodí se zároveň jako „hero“ data pro demo.
 - `scripts/seed-candidates.ts` (`npm run seed:candidates -- --user <email>`) dohledá uživatele v Supabase a pro každou fixture vloží:
-  - `research_jobs` (`status: 'ready'`, `target_role`, `job_description`)
-  - `personas` (`status: 'ready'`, `model: 'fixture'`, `profile`)
+  - `research_jobs` (`status: 'ready'`, v `notes` značka `[fixture:<slug>]`, takže opakované spuštění kandidáty aktualizuje a neduplikuje)
+  - `personas` (`status: 'ready'`, `model: 'fixture'`, `profile`, `candidate`)
 
   Bez `connector_runs` a `scraped_items`. Schéma to dovoluje a zbytek API (`GET /api/personas/:id`, interviews, chat) pak funguje stejně jako u reálné persony.
-- Seed se validuje přes `PersonaProfile.parse()`, takže fixtures se nerozjedou se schématem.
+- Seed validuje fixtures přes `PersonaProfile` a `CandidateBrief`. `npm run seed:candidates -- --check` je jen zkontroluje a do databáze nesahá.
 - `DELETE /api/research/:id` smaže seed i s agentem, takže úklid funguje bez další práce.
 
-**Napojení na reálná data (pozdější krok):** do `CreateJob` přidat `targetRole` a `jobDescription`, poslat je v digestu do OpenAI a rozšířit `SYSTEM_PROMPT` o instrukce pro `candidate` vrstvu (fakta jen z dat, doplněné věci zapsat do `invented`). Od toho okamžiku vytváří kandidáty scraping a fixtures zůstanou jen pro demo a testy.
+**Napojení na reálná data (pozdější krok):** HR zadá cílovou pozici a job description. Po vygenerování persony pak proběhne další OpenAI krok v background mode, který z persony a scrapovaných dat vyplní `personas.candidate` (fakta jen z dat, doplněné věci zapsat do `invented`). Od toho okamžiku vytváří kandidáty scraping a fixtures zůstanou jen pro demo a testy.
 
 ---
 
@@ -286,14 +311,14 @@ Všechny kroky 1–7 jdou udělat **bez scrapingu**. Na data stack se čeká až
 
 | # | Krok | Výstup | Odhad |
 |---|---|---|---|
-| 1 | Domluvit s autorem `persona.ts` umístění kandidátské vrstvy (`PersonaProfile.candidate` vs. sloupec) | rozhodnutí | 15 min |
-| 2 | Rozšířit `PersonaProfile` o `candidate` (nullable), napsat 2–3 fixtures a seed skript | kandidáti v DB bez scrapingu | 1.5 h |
-| 3 | HR-mode prompt v `agentSystemPrompt`, `difficulty` (migrace, schéma, `dynamicVariables`), úprava `agentConfig` | **hovor s kandidátem funguje** (otestovat přes `/docs` a ElevenLabs dashboard) | 1–1.5 h |
+| 1 | ~~Umístění kandidátské vrstvy~~ → samostatný sloupec `personas.candidate` | ✅ | |
+| 2 | ✅ `CandidateBrief`, 3 fixtures a seed skript | kandidáti v DB bez scrapingu | 1.5 h |
+| 3 | ✅ HR-mode prompt v `agentSystemPrompt`, `difficulty` (migrace, schéma, `dynamicVariables`), úprava `agentConfig` | **hovor s kandidátem funguje** (otestovat přes `/docs` a ElevenLabs dashboard) | 1–1.5 h |
 | 4 | Frontend `/candidates/[id]` + `/interview/[id]` s živým přepisem | **první demovatelný milník** | 1.5 h |
-| 5 | `feedback.ts` + migrace + napojení na `syncInterview` a webhook + validace citací | feedback v DB | 1.5–2 h |
+| 5 | ✅ `feedback.ts` + migrace + napojení na `syncInterview` a webhook + validace citací | feedback v DB | 1.5–2 h |
 | 6 | Frontend `/interviews/[id]/feedback` | **druhý milník: celý loop** | 1–1.5 h |
 | 7 | Stretch: `reportFeeling` + `/feelings` + mood meter + timeline; namluvený feedback přes TTS; `voices.ts` | wow efekt | 1.5 h |
-| 8 | Napojení na scraping: `targetRole` v `CreateJob`, kandidátská vrstva v persona promptu | reální kandidáti | 1 h |
+| 8 | Napojení na scraping: cílová pozice od HR + OpenAI krok, který vyplní `personas.candidate` | reální kandidáti | 1 h |
 | 9 | Demo: hero kandidát z fixtures (spolehlivý) + jeden reálný ze scrapingu, nacvičený scénář | demo | 1 h |
 
 Po každém kroku: `npm run typecheck && npm run lint && npm run build` a aktualizace `api-catalog.ts`.
@@ -309,7 +334,7 @@ Po každém kroku: `npm run typecheck && npm run lint && npm run build` a aktual
 | Chybějící `{{difficulty}}` shodí hovor | backend ho vrací vždy v `session.dynamicVariables` |
 | Netlify 60 s | feedback přes OpenAI background mode + polling, stejně jako persona |
 | Halucinace ve feedbacku | citace se ověřují proti přepisu, talk ratio počítá server |
-| Konflikt se společným `persona.ts` | krok 1 (domluva); případně samostatný sloupec |
+| Konflikt se společným `persona.ts` | vyřešeno samostatným sloupcem `personas.candidate` |
 | Webhook lokálně nedorazí | `GET /api/interviews/:id` posune hovor i feedback sám |
 | GDPR a etika | jen veřejná data, žádné citlivé kategorie, fixtures jsou fiktivní lidé, stock hlasy bez klonování. Feedback zároveň učí HR **neklást** diskriminační otázky (silný argument do pitche) |
 
@@ -317,7 +342,6 @@ Po každém kroku: `npm run typecheck && npm run lint && npm run build` a aktual
 
 ## 10. Otevřené otázky
 
-1. Kandidátská vrstva: rozšířit `PersonaProfile` (společný soubor), nebo samostatný sloupec?
 2. Frontend: kde je repo a kdo dělá které stránky? Počítám s tím, že `/interview` a `/feedback` jsou moje.
 3. Má HR zadávat `jobDescription` už při startu research jobu, nebo až před pohovorem?
 4. Má mít jeden kandidát (persona) víc pohovorů s různou obtížností a mezi nimi srovnání zlepšení? Data na to schéma už má.

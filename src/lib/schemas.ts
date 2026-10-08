@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Difficulty, FEELINGS } from "./candidate";
 
 // Request bodies, shared by the route handlers (validation) and the API catalog (docs).
 
@@ -27,6 +28,24 @@ export const StartInterview = z.object({
     .enum(["webrtc", "websocket"])
     .default("webrtc")
     .describe("`webrtc` returns `session.conversationToken`; `websocket` returns `session.signedUrl`."),
+  difficulty: Difficulty.default("realistic").describe(
+    "How the candidate behaves: `friendly`, `realistic` (default) or `tough`. Only affects candidate personas.",
+  ),
+});
+
+export const ReportFeelings = z.object({
+  events: z
+    .array(
+      z.object({
+        t: z.number().min(0).max(7200).describe("Seconds into the call."),
+        feeling: z.enum(FEELINGS),
+        intensity: z.number().min(1).max(5),
+        reason: z.string().max(300),
+      }),
+    )
+    .min(1)
+    .max(50)
+    .describe("`reportFeeling` client-tool calls from the agent, in order. Send them in batches during the call."),
 });
 
 export const Chat = z.object({
@@ -42,4 +61,14 @@ export const Tts = z.object({
   text: z.string().trim().min(1).max(5000).describe("Text to speak (max 5000 chars)."),
   voiceId: z.string().min(1).optional().describe("ElevenLabs voice ID. Defaults to ELEVENLABS_DEFAULT_VOICE_ID."),
   modelId: z.string().min(1).optional().describe("ElevenLabs TTS model. Defaults to ELEVENLABS_TTS_MODEL."),
+});
+
+export const DevFeedback = z.object({
+  conversationId: z.string().min(1).describe("ElevenLabs conversation ID (from the SDK's `onConnect`)."),
+  fixture: z
+    .string()
+    .regex(/^[a-z0-9-]+$/)
+    .describe("Candidate fixture the agent played, e.g. `alex-novak` (fixtures/candidates/<fixture>.json)."),
+  difficulty: Difficulty.default("realistic"),
+  feelings: ReportFeelings.shape.events.element.array().max(500).default([]).describe("`reportFeeling` events from the call."),
 });

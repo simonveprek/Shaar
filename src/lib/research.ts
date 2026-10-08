@@ -52,6 +52,7 @@ export type PersonaRow = {
   model: string;
   openai_response_id: string | null;
   profile: import("./persona").PersonaProfile | null;
+  candidate: import("./candidate").CandidateBrief | null;
   voice_id: string | null;
   elevenlabs_agent_id: string | null;
   error: string | null;

@@ -1,16 +1,16 @@
 import type { NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { handle, maybe, notFound } from "@/lib/http";
-import { syncInterview, type InterviewRow } from "@/lib/interviews";
-import { db } from "@/lib/supabase";
+import { handle } from "@/lib/http";
+import { advanceFeedback } from "@/lib/feedback";
+import { getInterview, syncInterview } from "@/lib/interviews";
 
-/** Interview with its transcript. Fetches the transcript from ElevenLabs if the webhook hasn't arrived yet. */
+/**
+ * Interview with its transcript and candidate feedback. Fetches the transcript from ElevenLabs if the webhook
+ * hasn't arrived yet, and moves feedback generation forward, so poll it until `feedback_status` is final.
+ */
 export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/interviews/[id]">) => {
   const user = await requireUser(req);
   const { id } = await ctx.params;
-  const interview = maybe(
-    await db().from("interviews").select().eq("id", id).eq("user_id", user.id).maybeSingle<InterviewRow>(),
-  );
-  if (!interview) throw notFound("Interview");
-  return Response.json({ interview: await syncInterview(interview) });
+  const interview = await getInterview(id, user.id);
+  return Response.json({ interview: await advanceFeedback(await syncInterview(interview)) });
 });

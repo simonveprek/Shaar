@@ -1,0 +1,313 @@
+# Interview simulator: nasazení a napojení
+
+Návod, jak dostat interview simulátor (hlasový pohovor HR ↔ AI kandidát a feedback od kandidáta) z větve `feature/interview-simulator` do reálného projektu a napojit na něj frontend.
+
+Kompletní popis feature je v [interview-simulator.md](interview-simulator.md), původní návrh v [interview-simulator-spec.md](interview-simulator-spec.md) a obecný popis backendu v [be.md](../be.md).
+
+```
+Frontend (Next.js, :3000)                Backend API (tohle repo, Netlify)            Externí služby
+─────────────────────────                ─────────────────────────────────            ──────────────
+MeetCall UI ── POST /personas/:id/interviews ──► agent + token ──────────────────────► ElevenLabs
+     │ ◄──────────────── { interview, session } ─┘
+     │ startSession(session) ═════════════ WebRTC hlas ═════════════════════════════► ElevenLabs agent
+     │ reportFeeling ──► POST /interviews/:id/feelings
+     │ konec hovoru                                  ◄── post-call webhook (přepis) ── ElevenLabs
+     └─ polling ──► GET /interviews/:id ──► feedback (OpenAI, na pozadí) ────────────► OpenAI
+                                                     ▲
+                                              Supabase (personas, interviews)
+```
+
+---
+
+## 1. Nasazení backendu
+
+### 1.1 Kód
+
+Sloučit větev `feature/interview-simulator` do `main` přes PR. Netlify nasadí automaticky. Před sloučením spustit `npm run typecheck && npm run lint && npm run build`.
+
+### 1.2 Databáze (Supabase)
+
+Spustit migraci [`supabase/migrations/20261009000000_interview_simulator.sql`](../supabase/migrations/20261009000000_interview_simulator.sql) v **Supabase → SQL Editor** (nebo `supabase db push`).
+
+- Přidává jen sloupce: `personas.candidate` a v `interviews` sloupce `difficulty`, `feelings` a `feedback*`. Existující data nemění.
+- Projekt je sdílený s jinou aplikací, takže **nesahat na jiné tabulky**.
+- **Bez migrace nové endpointy padají** (500 „column does not exist“), proto ji spustit dřív, než se nasadí kód.
+
+### 1.3 Proměnné prostředí (Netlify → Site configuration → Environment variables)
+
+| Proměnná | Povinná | Poznámka |
+|---|---|---|
+| `ELEVENLABS_API_KEY` | ✅ | Oprávnění: **Agents: Write**, **Voices: Read**, **Text to Speech**. Musí začínat na `sk_`, ne ID klíče |
+| `ELEVENLABS_DEFAULT_VOICE_ID` | ✅ | Záložní hlas. Kandidáti mají hlas podle persony (`src/lib/voices.ts`) |
+| `ELEVENLABS_AGENT_LLM` | – | Default `gpt-6-luna` (ověřeno, ElevenLabs ho nabízí) |
+| `ELEVENLABS_WEBHOOK_SECRET` | ✅ v produkci | Secret z post-call webhooku (1.4) |
+| `OPENAI_API_KEY` | ✅ | Feedback a persony |
+| `OPENAI_FEEDBACK_MODEL` | – | Default = `OPENAI_PERSONA_MODEL` |
+| `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | ✅ | |
+| `CORS_ORIGINS` | ✅ | URL frontendu, např. `https://projstalker.netlify.app` (víc hodnot oddělit čárkou) |
+| `PUBLIC_API_URL` | ✅ v produkci | URL backendu (Apify webhooky) |
+| `APIFY_TOKEN`, `APIFY_WEBHOOK_SECRET` | ✅ | Validace env je vyžaduje i pro interview část |
+
+### 1.4 ElevenLabs post-call webhook
+
+1. ElevenLabs → **Agents → Settings → Webhooks** → přidat **post-call webhook** na `https://<backend>/api/webhooks/elevenlabs`.
+2. Secret, který ElevenLabs vygeneruje, uložit do `ELEVENLABS_WEBHOOK_SECRET`.
+
+Webhook není nutný, ale zrychlí výsledky. Bez něj si přepis stáhne polling `GET /api/interviews/:id`, takže lokálně to funguje i bez něj.
+
+### 1.5 Kandidáti
+
+Dokud scraping neplní `personas.candidate`, nahrát fiktivní kandidáty pod účet, který bude demovat:
+
+```bash
+npm run seed:candidates -- --user <email-uzivatele-v-supabase>
+```
+
+Výpis vrátí `persona <id>` pro každého kandidáta. Tohle ID frontend použije ve všech voláních. Opakované spuštění kandidáty aktualizuje a neduplikuje.
+
+> Persona **bez** `candidate` se chová jako obecná persona: mluví první, nemá obtížnost ani hlášení pocitů. HR mode se zapne jen u person s kandidátskou vrstvou.
+
+### 1.6 Bezpečnost agentů
+
+Produkční agenti mají v ElevenLabs zapnuté ověření (`enable_auth`). Hovor jde zahájit **jen s tokenem z backendu**, takže samotné `agent_id` nikomu nestačí. Výjimkou jsou testovací agenti ze `npm run try:agent`, kteří jsou záměrně veřejní. Před demem je smazat:
+
+```bash
+npm run try:agent -- alex-novak --delete
+```
+
+---
+
+## 2. Napojení frontendu
+
+### 2.1 Co zkopírovat do frontend repa
+
+| Odkud (tohle repo) | Kam (frontend) |
+|---|---|
+| `src/components/meet/` (`MeetCall.tsx`, `meet.module.css`, `icons.ts`, `brand.ts`) | stejná cesta |
+| `public/brand/logo.svg` | `public/brand/` (vyměnit za logo firmy) |
+
+Dál nainstalovat:
+
+```bash
+npm install @elevenlabs/react@1.16.0
+```
+
+Komponenta potřebuje jen `react`, `next/font/google` a `@elevenlabs/react`. Ikony jsou vložené jako SVG, takže nezávisí na žádném externím fontu. Název firmy a logo se mění v `brand.ts`.
+
+### 2.2 Autentizace
+
+Všechna volání kromě webhooků posílají Supabase access token:
+
+```ts
+const token = (await supabase.auth.getSession()).data.session?.access_token;
+const api = (path: string, init: RequestInit = {}) =>
+  fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...init.headers },
+  });
+```
+
+Chyby mají vždy tvar `{ error: string, details?: unknown }` se správným HTTP statusem:
+
+| Status | Význam |
+|---|---|
+| 401 | neplatný token |
+| 404 | záznam neexistuje nebo patří jinému uživateli |
+| 409 | špatný stav, např. persona ještě není `ready` |
+| 502 | chyba ElevenLabs |
+
+### 2.3 Stránka kandidáta
+
+`GET /api/personas/:personaId` → `{ persona }`
+
+Pro UI se používá:
+- `persona.profile.display_name`, `persona.profile.one_line_summary`, `persona.profile.summary`
+- `persona.candidate.target_role`, `persona.candidate.career_summary`, `persona.candidate.experience[]`, `persona.candidate.projects[]`
+- **Nezobrazovat** `persona.candidate.hidden_facts`. Jsou to skrytá fakta, která má HR během pohovoru zjistit samo, a ukáží se až ve feedbacku.
+
+### 2.4 Hovor: stránka `/interview/[personaId]`
+
+```tsx
+"use client";
+import { useRef } from "react";
+import { useRouter } from "next/navigation";
+import { MeetCall, type CandidateFeedback, type FeelingEvent } from "@/components/meet/MeetCall";
+
+export function InterviewRoom({ personaId, name, role }: { personaId: string; name: string; role?: string }) {
+  const router = useRouter();
+  const interviewId = useRef<string | null>(null);
+
+  return (
+    <MeetCall
+      candidate={{ name, subtitle: role }}
+      connect={async (difficulty) => {
+        const res = await api(`/api/personas/${personaId}/interviews`, {
+          method: "POST",
+          body: JSON.stringify({ difficulty }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error);
+        interviewId.current = body.interview.id;
+        return body.session; // { conversationToken, dynamicVariables }: předat CELÉ
+      }}
+      onFeelings={(events: FeelingEvent[]) =>
+        api(`/api/interviews/${interviewId.current}/feelings`, {
+          method: "POST",
+          body: JSON.stringify({ events }),
+        })
+      }
+      // Hodnocení se ukáže přímo v UI po zavěšení (polling viz 2.5):
+      loadFeedback={() => waitForFeedback(interviewId.current!).then((i) => i.feedback as CandidateFeedback)}
+      // …nebo místo toho přesměrovat na vlastní stránku:
+      // onEnded={() => router.push(`/interviews/${interviewId.current}/feedback`)}
+    />
+  );
+}
+```
+
+Co komponenta `MeetCall` dělá sama:
+
+| Funkce | Jak |
+|---|---|
+| Lobby „Ready to join?“ | náhled kamery, mikrofon a kamera, volba obtížnosti, tlačítko Join now |
+| Spuštění hovoru | `startSession({ connectionType: "webrtc", ...session })` |
+| **`reportFeeling`** | zaregistrovaný přes `useConversationClientTool`. Bez něj by SDK hovor ukončilo chybou „Client tool … is not defined on client“ |
+| Dávkování pocitů | `onFeelings` se volá každých ~10 s a jednou na konci hovoru |
+| Živé titulky a přepis | z `onMessage` (`source: "user"` = HR, `"ai"` = kandidát) |
+| Indikace mluvení | podle `isSpeaking` a hlasitosti výstupu |
+| Ztlumení | `setMuted` |
+| Konec hovoru | `endSession()` a callback `onEnded` |
+| Hodnocení po hovoru | s `loadFeedback` ukáže „<Jméno> is writing you feedback…“ a pak celé hodnocení (skóre, citace, nevhodné otázky, co HR nezjistilo, tipy, nálada). Bez něj obrazovku „You left the meeting“ |
+
+Kamera HR je jen lokální náhled, nikam se neposílá. Pohovor je hlasový.
+
+Pokud frontend nechce použít `MeetCall`, minimum s `@elevenlabs/react` v1 vypadá takhle:
+
+```tsx
+<ConversationProvider>
+  <Room />
+</ConversationProvider>;
+
+function Room() {
+  const convo = useConversation({
+    onConnect: ({ conversationId }) => {}, // v1: startSession vrací void, ID přijde tady
+    onMessage: ({ message, source }) => {},
+    onDisconnect: () => {},
+  });
+  useConversationClientTool("reportFeeling", (p) => {
+    /* uložit a poslat na /feelings */
+  });
+  // convo.startSession({ connectionType: "webrtc", ...session });
+}
+```
+
+### 2.5 Feedback: data pro `loadFeedback` nebo vlastní stránku
+
+Hodnocení umí zobrazit přímo `MeetCall` přes `loadFeedback` (2.4). Vlastní stránka je potřeba, jen pokud chcete jiný layout. V obou případech pollovat `GET /api/interviews/:id` každé ~3 s, dokud `feedback_status` není `ready` nebo `failed`. Polling zároveň **posouvá** zpracování: stáhne přepis z ElevenLabs a spustí a vyzvedne feedback z OpenAI.
+
+```ts
+async function waitForFeedback(id: string) {
+  for (;;) {
+    const { interview } = await (await api(`/api/interviews/${id}`)).json();
+    if (interview.feedback_status === "ready") return interview;
+    if (interview.feedback_status === "failed") throw new Error(interview.feedback_error);
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+```
+
+Stavy, které má UI ukázat:
+
+| `status` | `feedback_status` | Co zobrazit |
+|---|---|---|
+| `pending` nebo `active` | `none` | „Zpracováváme hovor…“ |
+| `done` | `generating` | „Kandidát píše zpětnou vazbu…“ (typicky 20–60 s) |
+| `done` | `ready` | feedback |
+| `failed` nebo `done` | `failed` | chyba + tlačítko „Zkusit znovu“, které volá `POST /api/interviews/:id/feedback` |
+
+Tvar `interview.feedback`:
+
+```ts
+type Feedback = {
+  overall_feeling: string; // 1. osoba, hlavní citát nahoře
+  would_accept_offer: "yes" | "maybe" | "no";
+  would_recommend_company: number; // 0–10
+  scores: { rapport: number; clarity_of_questions: number; respect: number;
+            relevance_to_my_experience: number; company_pitch: number }; // 1–5
+  highlights: { quote: string; why: string }[];          // citace jsou ověřené proti přepisu
+  lowlights: { quote: string; why: string }[];
+  inappropriate_questions: { quote: string; issue: string }[]; // zvýraznit ⚠️
+  unanswered_candidate_questions: string[];
+  undiscovered: string[];          // „Co jste nezjistili“
+  tips_for_interviewer: string[];
+  glassdoor_style_review: string;
+  talk_ratio: { interviewer: number; candidate: number }; // % slov, počítá server
+  words: { interviewer: number; candidate: number };
+  dropped_quotes: number;          // kolik vymyšlených citací server zahodil
+};
+```
+
+K tomu jsou k dispozici:
+- `interview.transcript`: pole `[{ role: "user" | "agent", message, time_in_call_secs }]`, kde `user` je HR
+- `interview.feelings`: pole `[{ t, feeling, intensity, reason }]`, hodí se na časovou osu nálady nad přepisem
+- `interview.duration_secs` a `interview.difficulty`
+
+**Feedback namluvený hlasem kandidáta (volitelné):**
+
+```ts
+const audio = await api("/api/voice/tts", {
+  method: "POST",
+  body: JSON.stringify({ text: feedback.overall_feeling, voiceId: persona.voice_id }),
+});
+new Audio(URL.createObjectURL(await audio.blob())).play();
+```
+
+### 2.6 Historie pohovorů
+
+`GET /api/personas/:id/interviews` vrátí seznam pohovorů s danou personou. Hodí se na srovnání zlepšení napříč obtížnostmi.
+
+Místo pollingu jde použít i **Supabase Realtime** na tabulce `interviews`, protože RLS dovolí číst vlastní řádky. Změny ale vznikají jen tehdy, když něco zavolá backend (webhook nebo polling), proto **lokálně polling nevynechávat**.
+
+---
+
+## 3. Lokální vývoj a testování
+
+| Co | Jak |
+|---|---|
+| Backend | `npm run dev`, běží na http://localhost:4000, dokumentace API na `/docs` |
+| Rychlý test hlasu **bez Supabase a OpenAI** | `npm run try:agent -- alex-novak --feelings` a pak otevřít `http://localhost:4000/meet?agent=<agent_id>&name=Alex%20Novak&role=Senior%20Frontend%20Engineer` |
+| Přepis posledního testovacího hovoru | `npm run try:agent -- alex-novak --transcript` |
+| Náhled obrazovek bez hovoru | k URL `/meet` přidat `&ui=call` nebo `&ui=left` |
+| Test na stránce ElevenLabs | `npm run try:agent -- alex-novak` (bez `--feelings`, ta stránka client tool neumí) |
+| Kontrola fixtures | `npm run seed:candidates -- --check` |
+
+`/meet` v tomhle repu je jen testovací stránka. V produkci se UI používá ve frontendu přes `connect` s backendovým `session`.
+
+---
+
+## 4. Řešení problémů
+
+| Příznak | Příčina | Řešení |
+|---|---|---|
+| „Client tool with name reportFeeling is not defined on client“ | klient neobsluhuje `reportFeeling` | použít `MeetCall` nebo zaregistrovat `useConversationClientTool("reportFeeling", …)` |
+| Hovor se nespojí, žádná úvodní věta | mikrofon zablokovaný v prohlížeči | povolit mikrofon (ikona zámku v adresním řádku). Na produkci je nutné HTTPS |
+| 409 „Persona is not ready yet“ | persona se ještě generuje | počkat na `status: ready` |
+| ElevenLabs 401 `missing_permissions` | klíč nemá oprávnění | doplnit Agents Write, Voices Read, TTS |
+| ElevenLabs 401 `api_key_id_used_as_api_key` | v env je ID klíče, ne klíč | vložit hodnotu `sk_…` |
+| `feedback_status` zůstává `none` | hovor ještě není `done` (přepis se zpracovává) | pollovat dál. Na produkci pomůže webhook |
+| `feedback_status: failed`, „The interviewer never spoke“ | hovor bez slov HR | normální stav, žádný feedback nevznikne |
+| 500 „column … does not exist“ | chybí migrace | spustit migraci (1.2) |
+| Agent nečeká na HR a mluví do ticha | krátký `turn_timeout` | v `agentConfig` je 10 s, případně zvýšit |
+| CORS chyba ve frontendu | origin chybí v `CORS_ORIGINS` | doplnit URL frontendu |
+
+---
+
+## 5. Checklist před demem
+
+- [ ] Migrace spuštěná, kód nasazený, env vyplněné (1.2, 1.3)
+- [ ] Post-call webhook nastavený (1.4)
+- [ ] Kandidáti nahraní pod demo účet (1.5)
+- [ ] Logo a název firmy v `brand.ts` a `public/brand/`
+- [ ] Testovací agenti ze `try:agent` smazaní, API klíče zrotované (ten z chatu!)
+- [ ] Zkušební hovor na produkční URL přes HTTPS: lobby → hovor → feedback do 1 minuty
+- [ ] Sluchátka s mikrofonem, ať kandidát neslyší sám sebe

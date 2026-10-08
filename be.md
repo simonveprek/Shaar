@@ -79,6 +79,7 @@ Status values:
 | `connector_runs.status` | `running` → `ingesting` → `succeeded` \| `failed` |
 | `personas.status` | `generating` → `ready` \| `failed` |
 | `interviews.status` | `pending` → `active` → `done` \| `failed` |
+| `interviews.feedback_status` | `none` → `generating` → `ready` \| `failed` |
 
 Adding a source to an existing job (`POST /api/connectors/:platform` with `jobId`) sets the job back to
 `scraping`; when the new runs finish, the persona is regenerated from all data.
@@ -98,6 +99,25 @@ Frontend  ─► GET /api/interviews/:id                         ┴─► trans
 ```
 
 One agent per persona is stored in `personas.elevenlabs_agent_id`; it is deleted with the job.
+
+### Interview simulator (candidate personas)
+
+A persona with `personas.candidate` (a `CandidateBrief`, `src/lib/candidate.ts`) plays a **job candidate**
+interviewed by HR. Its agent gets an HR-mode prompt section, a `{{difficulty}}` dynamic variable (returned in
+`session.dynamicVariables`, so always pass the whole `session` to `startSession`), and a `reportFeeling` client
+tool the browser forwards to `POST /api/interviews/:id/feelings`. Candidate agents are re-synced on every start.
+
+```
+interview done ─► startFeedback (webhook or GET /api/interviews/:id)
+                    claim feedback_status none→generating ─► OpenAI background response
+GET /api/interviews/:id ─► advanceFeedback: poll OpenAI ─► drop quotes not in the transcript,
+                                            add talk ratio ─► feedback (ready) | feedback_error (failed)
+```
+
+Without scraping, `npm run seed:candidates -- --user <email>` loads fictional candidates from
+`fixtures/candidates/*.json` as ready jobs + personas (`--check` only validates them). Voice: male/female
+stock voice by `profile.voice.gender_presentation` + `age_sound` from OpenAI (`src/lib/voices.ts`).
+The call UI is `src/components/meet/` (test page `/meet`); full feature docs: `docs/interview-simulator.md`.
 
 ## 6. API reference
 
@@ -126,9 +146,11 @@ Users only ever see their own rows.
 | `GET /api/research/:id/items` | `?platform=&kind=profile\|post\|comment&limit=(≤200)&offset=&raw=1` | `{ items, total, limit, offset }` |
 | `POST /api/research/:id/persona` | | 202 `{ persona }` (regenerate; 409 while scraping) |
 | `GET /api/personas/:id` | | `{ persona }` (`persona.profile` is a `PersonaProfile`, see `src/lib/persona.ts`) |
-| `POST /api/personas/:id/interviews` | `{ voiceId?, transport?: "webrtc" (default) \| "websocket" }` | 201 `{ interview, agentId, session: { conversationToken } \| { signedUrl } }` (409 if persona not ready) |
+| `POST /api/personas/:id/interviews` | `{ voiceId?, transport?: "webrtc" (default) \| "websocket", difficulty?: "friendly" \| "realistic" (default) \| "tough" }` | 201 `{ interview, agentId, session: { conversationToken } \| { signedUrl } }`, plus `session.dynamicVariables` for candidate personas (409 if persona not ready) |
 | `GET /api/personas/:id/interviews` | | `{ interviews }` |
-| `GET /api/interviews/:id` | | `{ interview }` with `transcript: [{ role: "user"\|"agent", message, time_in_call_secs }]` |
+| `GET /api/interviews/:id` | | `{ interview }` with `transcript: [{ role: "user"\|"agent", message, time_in_call_secs }]`, `feelings`, `feedback_status`, `feedback`; **also advances feedback** |
+| `POST /api/interviews/:id/feelings` | `{ events: [{ t, feeling, intensity, reason }] }` (1-50) | `{ feelings }` |
+| `POST /api/interviews/:id/feedback` | | 202 `{ interview }`; regenerates feedback (409 until the call is `done`) |
 | `POST /api/ai/chat` | `{ messages: [{ role: "user"\|"assistant", content }], jobId? }` | **Streamed `text/plain`**; `jobId` grounds answers in that persona |
 | `POST /api/voice/tts` | `{ text (≤5000), voiceId?, modelId? }` | **Streamed `audio/mpeg`** |
 | `POST /api/webhooks/apify?secret=…` | Apify webhook payload | Server-to-server only |
@@ -177,8 +199,8 @@ for (let r; !(r = await reader.read()).done; ) append(decoder.decode(r.value, { 
 | `research_jobs` | `id`, `user_id`, `subject_name`, `notes`, `status`, `error` |
 | `connector_runs` | `job_id`, `platform`, `target`, `actor_id`, `input`, `apify_run_id`, `dataset_id`, `status`, `item_count`, `error` |
 | `scraped_items` | `job_id`, `run_id`, `platform`, `kind` (profile/post/comment), `external_id`, `url`, `author`, `text`, `posted_at`, `metrics` (jsonb numbers), `media` (url array), `data` (raw Apify item). Unique `(run_id, external_id)` |
-| `personas` | `job_id` (unique), `status`, `model`, `openai_response_id`, `profile` (jsonb `PersonaProfile`), `voice_id`, `elevenlabs_agent_id` |
-| `interviews` | `persona_id`, `elevenlabs_conversation_id` (unique), `status`, `transcript`, `analysis`, `duration_secs` |
+| `personas` | `job_id` (unique), `status`, `model`, `openai_response_id`, `profile` (jsonb `PersonaProfile`), `candidate` (jsonb `CandidateBrief`, nullable), `voice_id`, `elevenlabs_agent_id` |
+| `interviews` | `persona_id`, `elevenlabs_conversation_id` (unique), `status`, `transcript`, `analysis`, `duration_secs`, `difficulty`, `feelings`, `feedback_status`, `feedback_response_id`, `feedback` (jsonb `StoredFeedback`), `feedback_error` |
 
 - RLS: `authenticated` users can **select** their own rows. There are **no insert/update policies**: all
   writes go through the backend with the secret key (`db()` in `src/lib/supabase.ts`), which bypasses RLS,
@@ -202,7 +224,9 @@ src/
     auth.ts               requireUser(req) → { id, email }
     research.ts           job lifecycle: createJob, startConnector, syncConnectorRun, advanceJob, generatePersona
     persona.ts            PersonaProfile schema, digest builder, OpenAI start/poll, agent system prompt
-    interviews.ts         ensureAgent, startInterview, syncInterview
+    candidate.ts          CandidateBrief schema, difficulty, HR-mode prompt section, reportFeeling tool name
+    interviews.ts         ensureAgent, startInterview, syncInterview, feelings
+    feedback.ts           candidate feedback: OpenAI background start/poll, quote validation, talk ratio
     elevenlabs.ts         REST client, TTS, webhook HMAC verification
     schemas.ts            zod request-body schemas (shared by routes and docs)
     api-catalog.ts        list of every route → GET /api and /docs
@@ -221,7 +245,10 @@ Conventions:
 - **Supabase results**: `must(...)` when a row must exist, `maybe(...)` with `.maybeSingle()`,
   `check(...)` for writes whose result you don't use. Don't destructure `{ data, error }` manually.
 - **Env**: add new variables to the schema in `src/lib/env.ts` **and** to `.env.example`. Never read
-  `process.env` directly elsewhere (except `src/proxy.ts`). Secrets never go to the browser.
+  `process.env` directly elsewhere (except `src/proxy.ts` and the `NODE_ENV` guard in `/api/dev/*`). Secrets
+  never go to the browser. Code that only needs its own service uses `envVar("KEY")` (validates one variable)
+  instead of `env()` (validates all), so e.g. voice tests run with only an ElevenLabs key.
+- **`/api/dev/*`** routes are for local testing only and must 404 when `NODE_ENV === "production"`.
 - **Verify before shipping**: `npm run typecheck`, `npm run lint`, `npm run build`.
 
 ### Adding or changing a platform connector

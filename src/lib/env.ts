@@ -10,6 +10,8 @@ const schema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_PERSONA_MODEL: z.string().default("gpt-6.1-sol"),
   OPENAI_CHAT_MODEL: z.string().default("gpt-6-luna"),
+  // Candidate feedback after a practice interview. Defaults to OPENAI_PERSONA_MODEL.
+  OPENAI_FEEDBACK_MODEL: z.string().optional(),
   ELEVENLABS_API_KEY: z.string().min(1),
   ELEVENLABS_WEBHOOK_SECRET: z.string().optional(),
   ELEVENLABS_DEFAULT_VOICE_ID: z.string().min(1),
@@ -36,4 +38,15 @@ export function env(): Env {
     cached = parsed.data;
   }
   return cached;
+}
+
+/**
+ * One validated variable. For code that only needs its own service (OpenAI, ElevenLabs), so it works
+ * without the rest of the environment, e.g. local voice tests with only an ElevenLabs key.
+ */
+export function envVar<K extends keyof Env>(key: K): Env[K] {
+  if (cached) return cached[key];
+  const parsed = schema.shape[key].safeParse(process.env[key]);
+  if (!parsed.success) throw new Error(`Invalid or missing environment variable: ${key}`);
+  return parsed.data as Env[K];
 }

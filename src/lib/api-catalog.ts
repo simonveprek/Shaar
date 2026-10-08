@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Chat, CreateJob, RunConnector, StartInterview, Tts } from "./schemas";
+import { Chat, CreateJob, DevFeedback, ReportFeelings, RunConnector, StartInterview, Tts } from "./schemas";
 
 /*
  * Every public route, in one place. Powers GET /api (JSON index) and /docs (how-to page).
@@ -59,6 +59,7 @@ const persona = {
     suggested_interview_questions: ["How did you get into climbing photography?"],
     "…": "see PersonaProfile in src/lib/persona.ts",
   },
+  candidate: null,
   voice_id: null,
   elevenlabs_agent_id: null,
 };
@@ -257,17 +258,17 @@ export const routes: RouteDoc[] = [
     group: "Personas & interviews",
     summary: "Start a simulated voice interview",
     description:
-      "Creates the persona's ElevenLabs voice agent on first use and returns a session for the browser. Pass `session` straight to `conversation.startSession(session)` from `@elevenlabs/react`. Returns 409 if the persona isn't ready.",
+      "Creates the persona's ElevenLabs voice agent on first use and returns a session for the browser. Pass `session` straight to `conversation.startSession(session)` from `@elevenlabs/react`. Returns 409 if the persona isn't ready. If the persona has a candidate brief (`persona.candidate`), the agent plays a job candidate interviewed by HR: `difficulty` sets how it behaves, `session.dynamicVariables` carries it (always pass the whole `session`), and the agent calls the `reportFeeling` client tool. The browser **must** register it (`useConversationClientTool(\"reportFeeling\", …)` or `clientTools`), otherwise the SDK ends the call; forward the events to `POST /api/interviews/:id/feelings`. `agentId` is informational: agents only accept the returned token.",
     auth: "user",
     params: { id: "Persona ID" },
     body: StartInterview,
-    bodyExample: {},
+    bodyExample: { difficulty: "realistic" },
     response: {
       status: 201,
       example: {
-        interview: { id: "e77d…", persona_id: "5a9b…", status: "pending", elevenlabs_conversation_id: "conv_…" },
+        interview: { id: "e77d…", persona_id: "5a9b…", status: "pending", difficulty: "realistic", elevenlabs_conversation_id: "conv_…" },
         agentId: "agent_…",
-        session: { conversationToken: "eyJ…" },
+        session: { conversationToken: "eyJ…", dynamicVariables: { difficulty: "realistic" } },
       },
     },
   },
@@ -284,8 +285,9 @@ export const routes: RouteDoc[] = [
     method: "GET",
     path: "/api/interviews/:id",
     group: "Personas & interviews",
-    summary: "Interview transcript",
-    description: "Fetches the transcript from ElevenLabs if the post-call webhook hasn't delivered it yet.",
+    summary: "Interview transcript and candidate feedback",
+    description:
+      "Fetches the transcript from ElevenLabs if the post-call webhook hasn't delivered it yet. Once the call is `done`, it also starts and then collects the candidate's feedback (OpenAI, in the background): poll every ~3 s until `feedback_status` is `ready` or `failed`. `feedback.talk_ratio` and `words` are computed from the transcript; quotes the model couldn't back with the transcript are dropped (`dropped_quotes`).",
     auth: "user",
     params: { id: "Interview ID" },
     response: {
@@ -300,9 +302,52 @@ export const routes: RouteDoc[] = [
             { role: "user", message: "How did you start shooting climbing?", time_in_call_secs: 6 },
           ],
           analysis: { transcript_summary: "…" },
+          difficulty: "realistic",
+          feelings: [{ t: 41, feeling: "engaged", intensity: 4, reason: "they asked about my CLI tool" }],
+          feedback_status: "ready",
+          feedback: {
+            overall_feeling: "Honestly it started a bit stiff, but once you asked about my side project I relaxed.",
+            would_accept_offer: "maybe",
+            would_recommend_company: 7,
+            scores: { rapport: 4, clarity_of_questions: 3, respect: 5, relevance_to_my_experience: 4, company_pitch: 2 },
+            highlights: [{ quote: "What did you learn from maintaining it alone?", why: "Felt like you read my GitHub." }],
+            lowlights: [],
+            inappropriate_questions: [],
+            unanswered_candidate_questions: ["How much of the week is on-call?"],
+            undiscovered: ["I have a competing offer that expires Friday."],
+            tips_for_interviewer: ["Pitch the team before asking about salary."],
+            glassdoor_style_review: "Friendly, a bit scripted, never told me what the team actually builds.",
+            talk_ratio: { interviewer: 38, candidate: 62 },
+            words: { interviewer: 412, candidate: 671 },
+            dropped_quotes: 0,
+          },
+          feedback_error: null,
         },
       },
     },
+  },
+  {
+    method: "POST",
+    path: "/api/interviews/:id/feelings",
+    group: "Personas & interviews",
+    summary: "Record the candidate's feelings during a call",
+    description:
+      "Forward the agent's `reportFeeling` client-tool calls here, batched every ~10 s and once more when the call ends. They power the mood timeline and feed the feedback.",
+    auth: "user",
+    params: { id: "Interview ID" },
+    body: ReportFeelings,
+    bodyExample: { events: [{ t: 41, feeling: "engaged", intensity: 4, reason: "they asked about my CLI tool" }] },
+    response: { status: 200, example: { feelings: [{ t: 41, feeling: "engaged", intensity: 4, reason: "…" }] } },
+  },
+  {
+    method: "POST",
+    path: "/api/interviews/:id/feedback",
+    group: "Personas & interviews",
+    summary: "Regenerate the candidate's feedback",
+    description: "Starts feedback generation again. Returns 409 until the call is `done`. Poll `GET /api/interviews/:id` for the result.",
+    auth: "user",
+    params: { id: "Interview ID" },
+    response: { status: 202, example: { interview: { id: "e77d…", feedback_status: "generating" } } },
   },
 
   // ── AI & voice
@@ -327,6 +372,20 @@ export const routes: RouteDoc[] = [
     body: Tts,
     bodyExample: { text: "Here's what I found about Jane." },
     response: { status: 200, contentType: "audio/mpeg (streamed)", note: "Play with `new Audio(URL.createObjectURL(await res.blob()))`." },
+  },
+
+  // ── Local testing
+  {
+    method: "POST",
+    path: "/api/dev/feedback",
+    group: "Local testing",
+    summary: "Candidate feedback for a test call (next dev only)",
+    description:
+      "For calls on `/meet?agent=…&fixture=…` with a test agent from `npm run try:agent`, without Supabase or auth. Returns 202 `processing` until ElevenLabs has processed the call, then 202 `{ responseId }`; poll `GET /api/dev/feedback?responseId=…&conversationId=…` until `ready` or `failed`. 404 in production builds.",
+    auth: "none",
+    body: DevFeedback,
+    bodyExample: { conversationId: "conv_…", fixture: "alex-novak", difficulty: "realistic", feelings: [] },
+    response: { status: 202, example: { state: "generating", responseId: "resp_…" } },
   },
 
   // ── Webhooks

@@ -3,6 +3,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import type { Response as OpenAIResponse } from "openai/resources/responses/responses";
 import { openai } from "./openai";
 import { env } from "./env";
+import { candidatePromptBlock, type CandidateBrief } from "./candidate";
 
 /** Structured persona produced by the OpenAI model. Strict structured outputs: nullable, never optional. */
 export const PersonaProfile = z.object({
@@ -44,7 +45,11 @@ export const PersonaProfile = z.object({
   topics_to_avoid: z.array(z.string()),
   suggested_interview_questions: z.array(z.string()),
   voice: z.object({
-    gender_presentation: z.enum(["male", "female", "neutral", "unknown"]),
+    gender_presentation: z
+      .enum(["male", "female", "neutral", "unknown"])
+      .describe(
+        "How the person presents publicly, from their name, photos, bio and how others refer to them. Picks a male or female voice; use neutral/unknown only when the data gives no signal.",
+      ),
     age_sound: z.enum(["young", "middle_aged", "old", "unknown"]),
     accent: z.string().nullable(),
     description: z.string().describe("How their voice and delivery should sound in a voice simulation."),
@@ -155,9 +160,17 @@ function safeJson(text: string): unknown {
   }
 }
 
-/** Full system prompt for the ElevenLabs voice agent playing this persona. */
-export function agentSystemPrompt(profile: PersonaProfile): string {
+/**
+ * Full system prompt for the ElevenLabs voice agent playing this persona. With a candidate brief the persona
+ * plays a job candidate interviewed by HR (see src/lib/candidate.ts).
+ */
+export function agentSystemPrompt(
+  profile: PersonaProfile,
+  candidate?: CandidateBrief | null,
+  opts: { feelingTool?: boolean } = {},
+): string {
   return `${profile.roleplay_instructions}
+${candidate ? `\n${candidatePromptBlock(candidate, opts.feelingTool ?? true)}\n` : ""}
 
 # Who you are
 ${profile.summary}
