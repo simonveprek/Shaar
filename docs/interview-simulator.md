@@ -261,18 +261,22 @@ Pokud HR za celý hovor nepromluvil, stav je `failed` s chybou „The interviewe
 
 ## 7. Call UI
 
-`src/components/meet/` je samostatná React komponenta, která napodobuje rozhraní Google Meet pro hovor 1:1. Místo Google brandingu používá **Shaar**: logo `@/components/logo` a název z `brand.ts`.
+`src/components/meet/MeetCall.tsx` je hovor 1:1 rozvržený jako Google Meet a nakreslený ve stylu **Shaar** podle pravidel v `AGENTS.md`:
+- komponenty z kitu Fragms (`Button`, `IconButton`, `Panel`, `Segmented`, `Avatar`, `Spinner`, `toast`, `Stat`, `Status`) a Tailwind jen s tokeny
+- tmavé povrchy (`dark`), písmo Geist, popisky v rozpaleném uppercase
+- logo `@/components/logo` a ikony Hugeicons
+- **`Aura`** z Fragms jako mluvící koule kolem kandidáta i kolem vlastního náhledu
 
-Kvůli věrnému vzhledu Meetu má komponenta vlastní CSS modul místo Fragms tokenů. Je to vědomá výjimka z UI pravidel v `AGENTS.md` a týká se jen `src/components/meet/`.
+Žádné vlastní CSS soubory.
 
 ### Obrazovky
 
 | Obrazovka | Obsah |
 |---|---|
-| **Lobby** | logo a název „<Firma> Meet“, náhled kamery s přepínači mikrofonu a kamery, „Ready to join?“, „<Kandidát> is waiting“, volba obtížnosti, **Join now** |
-| **Hovor** | tmavá místnost, dlaždice kandidáta (avatar s iniciálami, kroužek a ekvalizér, když mluví), vlastní náhled vpravo dole, titulky, spodní lišta (čas a kód schůzky, mikrofon, kamera, CC, nálada, zavěšení, People, Transcript), boční panely |
-| **Hodnocení** | „<Jméno> is writing you feedback…“ a pak výsledky (viz kapitola 6). Při chybě tlačítko Try again. Vždy tlačítko Rejoin |
-| **Po odchodu** (bez `loadFeedback`) | „You left the meeting“, Rejoin, případně odkaz `feedbackHref` |
+| **Lobby** | hlavička Shaar se štítkem Simulation, náhled kamery s přepínači mikrofonu a kamery, „Practice interview“ a „Ready to join?“, kandidát, obtížnost (`Segmented`), **Join now** |
+| **Hovor** | dlaždice kandidáta (iniciály v kruhu se zářící `Aura` podle hlasitosti, „Speaking“), vlastní náhled vpravo dole (také s `Aura`), titulky, spodní lišta (čas a kód, mikrofon, kamera, CC, nálada, zavěšení, People, Transcript), boční panely |
+| **Hodnocení** | „<Jméno> is writing you feedback“ a pak výsledky (viz kapitola 6). Při chybě tlačítko Try again. Vždy tlačítko Rejoin |
+| **Po odchodu** (bez `loadFeedback`) | „You left the call“, Rejoin, případně odkaz `feedbackHref` |
 
 ### Props
 
@@ -292,10 +296,15 @@ Kvůli věrnému vzhledu Meetu má komponenta vlastní CSS modul místo Fragms t
 
 - **SDK:** `@elevenlabs/react` v1. Používá `ConversationProvider`, `useConversation` (ID konverzace přichází v `onConnect`, `startSession` vrací `void`) a `useConversationClientTool("reportFeeling")`.
 - **Kamera** je jen lokální náhled pro HR a nikam se neposílá. Pohovor je čistě hlasový.
-- **Ikony** jsou Material Icons vložené jako SVG (`icons.ts`, Apache 2.0), takže nezávisí na externím fontu. Písmo je Roboto přes `next/font`.
-- **Animace mluvení** běží přes `requestAnimationFrame` a CSS proměnné, takže nezpůsobují překreslování Reactu.
+- **Mluvení:** `Aura` čte hlasitost (`getOutputVolume` a `getInputVolume`) přes funkci každý snímek, takže nezpůsobuje překreslování Reactu.
+- **Ovládání hovoru** je malá komponenta `CallButton`. Každý stav má jednu sadu tříd, aby se nehádaly dvě utility o stejnou vlastnost (`cx` jen spojuje třídy):
+  - `idle`
+  - `on` (primary pilulka jako stisknutá klávesa)
+  - `off` (tón danger, je to stav)
+  - `end` (jediná červená akce)
+- **Skóre** kreslí neutrální proužek `Bar`, ne `Meter` z `bits.tsx`. `Meter` totiž nad 90 % zčervená, a tady je vysoké skóre dobře.
 - **Přístupnost:** tlačítka mají `aria-label` i `title`, přepínače `aria-pressed`, obtížnost je `radiogroup` a fokus je viditelný.
-- **Responzivita:** pod 900 px se lobby skládá pod sebe, panely přecházejí na celou obrazovku a hodnocení do jednoho sloupce.
+- **Responzivita:** funguje na 375 px. Lobby se skládá pod sebe, panely přecházejí přes celou obrazovku, Transcript je na mobilu v liště a hodnocení je v jednom sloupci.
 
 ---
 
@@ -455,8 +464,6 @@ src/app/api/
   dev/feedback/route.ts                 lokální testovací feedback
 src/components/meet/
   MeetCall.tsx        lobby, hovor, hodnocení, po odchodu
-  meet.module.css     styly (světlé lobby a hodnocení, tmavá místnost)
-  icons.ts            SVG ikony
   brand.ts            název produktu (logo je @/components/logo)
 src/app/meet/         testovací stránka (/meet?agent=…&fixture=…)
 fixtures/candidates/  3 fiktivní kandidáti
