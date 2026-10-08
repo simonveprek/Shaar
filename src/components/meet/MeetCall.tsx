@@ -8,6 +8,7 @@ import {
 } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Roboto } from "next/font/google";
+import { Logo } from "@/components/logo";
 import { BRAND } from "./brand";
 import { ICONS, type IconName } from "./icons";
 import styles from "./meet.module.css";
@@ -726,8 +727,7 @@ function Lobby(props: {
 function Header() {
   return (
     <header className={styles.header}>
-      {/* eslint-disable-next-line @next/next/no-img-element -- tiny static logo, any format */}
-      <img src={BRAND.logo} alt="" width={40} height={40} />
+      <Logo className={styles.logo} aria-hidden />
       <span className={styles.brandName}>{BRAND.name}</span>
       <span className={styles.brandProduct}>{BRAND.product}</span>
     </header>

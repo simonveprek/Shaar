@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Chat, CreateJob, DevFeedback, ReportFeelings, RunConnector, StartInterview, Tts } from "./schemas";
+import { Chat, CreateJob, DevFeedback, ReportFeelings, RunConnector, StartDiscovery, StartInterview, Tts } from "./schemas";
 
 /*
  * Every public route, in one place. Powers GET /api (JSON index) and /docs (how-to page).
@@ -72,7 +72,7 @@ export const routes: RouteDoc[] = [
     group: "Basics",
     summary: "This index of every route",
     auth: "none",
-    response: { status: 200, example: { name: "Projstalker API", docs: "/docs", routes: ["…"] } },
+    response: { status: 200, example: { name: "Shaar API", docs: "/docs", routes: ["…"] } },
   },
   {
     method: "GET",
@@ -89,7 +89,7 @@ export const routes: RouteDoc[] = [
     path: "/api/connectors",
     group: "Connectors",
     summary: "List supported platforms",
-    description: "Use this to build the \"add a source\" form: `targetHint` is the input placeholder, `notes` are caveats to show.",
+    description: "Builds the add a source form. Use `targetHint` as the placeholder and show `notes` as a caveat.",
     auth: "none",
     response: {
       status: 200,
@@ -124,12 +124,56 @@ export const routes: RouteDoc[] = [
     group: "Connectors",
     summary: "Scrape one platform profile",
     description:
-      "Without `jobId` this starts a new research job for one profile. With `jobId` it adds the profile to an existing job; the job goes back to `scraping` and the persona is rebuilt when it finishes.",
+      "Without `jobId` this starts a new research job for one profile. With `jobId` it adds the profile to that job. The job goes back to `scraping` and the persona is rebuilt when it finishes.",
     auth: "user",
     params: { platform: "Platform key" },
     body: RunConnector,
     bodyExample: { target: "@janedoe", maxPosts: 30, jobId: "8f0c…" },
     response: { status: 201, example: { job, runs: [run] } },
+  },
+
+  // ── Discovery
+  {
+    method: "POST",
+    path: "/api/discover",
+    group: "Discovery",
+    summary: "Find a name's public profiles",
+    description:
+      "Runs one Google search per platform for the name in quotes. Poll `GET /api/discover/:id` until `status` is `ready`, then let the visitor confirm which candidates are really the person and pass those to `POST /api/research` as targets.",
+    auth: "user",
+    body: StartDiscovery,
+    bodyExample: { name: "Jane Doe", purpose: "Gather intelligence" },
+    response: { status: 201, example: { discovery: { id: "d81a…", name: "Jane Doe", status: "searching", candidates: [] } } },
+  },
+  {
+    method: "GET",
+    path: "/api/discover/:id",
+    group: "Discovery",
+    summary: "Candidate profiles for a name",
+    description: "Each call checks the search. Candidates are profile links whose title matches the name, at most two per platform, closest first.",
+    auth: "user",
+    params: { id: "Discovery ID" },
+    response: {
+      status: 200,
+      example: {
+        discovery: {
+          id: "d81a…",
+          status: "ready",
+          candidates: [
+            {
+              id: "instagram:janedoe",
+              platform: "instagram",
+              label: "Instagram",
+              handle: "janedoe",
+              url: "https://instagram.com/janedoe",
+              title: "Jane Doe (@janedoe) • Instagram photos and videos",
+              snippet: "1,204 followers…",
+              match: 1,
+            },
+          ],
+        },
+      },
+    },
   },
 
   // ── Research
@@ -139,7 +183,7 @@ export const routes: RouteDoc[] = [
     group: "Research",
     summary: "Start a research job",
     description:
-      "Starts one Apify run per actor for each target (some platforms use a profile actor and a posts actor). Scraping takes a few minutes; then poll `GET /api/research/:id` until `job.status` is `ready` or `failed`.",
+      "Starts the Apify runs for every target. Some platforms use one actor for the profile and one for posts. Scraping takes a few minutes. Then poll `GET /api/research/:id` until `job.status` is `ready` or `failed`.",
     auth: "user",
     body: CreateJob,
     bodyExample: {
@@ -170,7 +214,7 @@ export const routes: RouteDoc[] = [
     group: "Research",
     summary: "Job progress, runs and persona",
     description:
-      "The main polling endpoint (every ~5 s). Each call also moves the job forward: it pulls in finished Apify runs and checks persona generation. `job.status`: scraping → analyzing → ready | failed.",
+      "Poll this every 5 seconds or so. Each call also moves the job forward by pulling in finished Apify runs and checking on the persona. `job.status` goes from `scraping` to `analyzing` to `ready` or `failed`.",
     auth: "user",
     params: { id: "Job ID" },
     response: {
@@ -228,6 +272,31 @@ export const routes: RouteDoc[] = [
         total: 31,
         limit: 50,
         offset: 0,
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/research/:id/dossier",
+    group: "Research",
+    summary: "The watcher's file",
+    description:
+      "What a watcher could put together from the job's public data. Where they are, when they post (UTC), how much, who they mention, their most seen posts and an exposure score out of 100. It describes exposure only and never scores the person. The `/dossier/sample` page shows it for a fictional subject.",
+    auth: "user",
+    params: { id: "Job ID" },
+    response: {
+      status: 200,
+      example: {
+        jobStatus: "ready",
+        sources: [{ platform: "instagram", status: "done", items: 31 }],
+        dossier: {
+          fileNumber: "0417-K",
+          subject: { name: "Mara Vell", oneLine: "Film photographer in Prague…" },
+          totals: { items: 214, posts: 210, platforms: 4, reach: 7070, yearsVisible: 3.1 },
+          routine: { peak: { day: 1, hour: 20, count: 9 }, busiestHours: [20, 21, 10] },
+          exposure: { score: 78, factors: [{ label: "Volume", detail: "210 public posts", value: 27 }] },
+          "…": "presence, activity, topics, circle, quotes, views",
+        },
       },
     },
   },
@@ -357,7 +426,7 @@ export const routes: RouteDoc[] = [
     group: "AI & voice",
     summary: "Streaming chat with the research assistant",
     description:
-      "Streams the reply as plain text chunks. With `jobId`, answers are grounded in that job's persona (\"what does she think about X?\").",
+      "Streams the reply as plain text. With `jobId` the answers come from that job's persona, so you can ask what they think about something.",
     auth: "user",
     body: Chat,
     bodyExample: { jobId: "8f0c…", messages: [{ role: "user", content: "What topics does she post about most?" }] },

@@ -6,7 +6,7 @@ import { db } from "@/lib/supabase";
 
 /** Start a research job: one Apify run per target. Poll GET /api/research/:id for progress. */
 export const POST = handle(async (req: Request) => {
-  const user = await requireUser(req);
+  const user = await requireUser(req, { visitor: "create" });
   const body = await readJson(req, CreateJob);
   const result = await createJob(user.id, body);
   return Response.json(result, { status: 201 });

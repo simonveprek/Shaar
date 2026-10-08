@@ -4,15 +4,15 @@ import { Difficulty, FEELINGS } from "./candidate";
 // Request bodies, shared by the route handlers (validation) and the API catalog (docs).
 
 export const Target = z.object({
-  platform: z.string().describe("Platform key from GET /api/connectors, e.g. `instagram`."),
+  platform: z.string().describe("Platform key from GET /api/connectors, like `instagram`."),
   target: z.string().trim().min(1).max(500).describe("Handle (`@natgeo`) or profile URL."),
   maxPosts: z.number().int().min(1).max(500).optional().describe("Posts to fetch for this target. Default 30."),
 });
 
 export const CreateJob = z.object({
   subjectName: z.string().trim().min(1).max(200).describe("Who is being researched. Shown in the UI and given to the model."),
-  notes: z.string().max(2000).optional().describe("Extra context for the persona model, e.g. their job or why you're researching them."),
-  targets: z.array(Target).min(1).max(20).describe("One entry per platform profile to scrape (1-20)."),
+  notes: z.string().max(2000).optional().describe("Extra context for the persona model, like their job or why you are researching them."),
+  targets: z.array(Target).min(1).max(20).describe("One entry per profile to scrape, 1 to 20."),
 });
 
 export const RunConnector = z.object({
@@ -27,7 +27,7 @@ export const StartInterview = z.object({
   transport: z
     .enum(["webrtc", "websocket"])
     .default("webrtc")
-    .describe("`webrtc` returns `session.conversationToken`; `websocket` returns `session.signedUrl`."),
+    .describe("`webrtc` returns `session.conversationToken`. `websocket` returns `session.signedUrl`."),
   difficulty: Difficulty.default("realistic").describe(
     "How the candidate behaves: `friendly`, `realistic` (default) or `tough`. Only affects candidate personas.",
   ),
@@ -61,6 +61,11 @@ export const Tts = z.object({
   text: z.string().trim().min(1).max(5000).describe("Text to speak (max 5000 chars)."),
   voiceId: z.string().min(1).optional().describe("ElevenLabs voice ID. Defaults to ELEVENLABS_DEFAULT_VOICE_ID."),
   modelId: z.string().min(1).optional().describe("ElevenLabs TTS model. Defaults to ELEVENLABS_TTS_MODEL."),
+});
+
+export const StartDiscovery = z.object({
+  name: z.string().trim().min(2).max(120).describe("The person's full name, as typed."),
+  purpose: z.string().trim().max(200).optional().describe("What the visitor chose to do, saved with the search and later as the job's notes."),
 });
 
 export const DevFeedback = z.object({

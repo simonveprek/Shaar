@@ -59,6 +59,12 @@
   height: 64px;
   padding: 0 16px;
 }
+.logo {
+  width: 26px;
+  height: 36px;
+  margin: 0 4px 0 6px;
+  color: var(--ink);
+}
 .brandName {
   font-size: 22px;
   color: var(--ink-2);

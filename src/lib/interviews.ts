@@ -1,5 +1,5 @@
 import { db } from "./supabase";
-import { env } from "./env";
+import { need } from "./env";
 import { HttpError, maybe, must, notFound } from "./http";
 import { createPersonaAgent, getConversation, getConversationToken, getSignedUrl, updatePersonaAgent } from "./elevenlabs";
 import type { PersonaRow } from "./research";
@@ -65,7 +65,7 @@ export async function ensureAgent(persona: PersonaRow, voiceId?: string): Promis
     voiceId ??
     persona.voice_id ??
     (persona.candidate ? pickVoice(persona.profile.voice) : null) ??
-    env().ELEVENLABS_DEFAULT_VOICE_ID;
+    need("ELEVENLABS_DEFAULT_VOICE_ID", "A default voice");
 
   if (persona.elevenlabs_agent_id && persona.voice_id === voice && !persona.candidate) return persona;
 

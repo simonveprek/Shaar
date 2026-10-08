@@ -261,7 +261,9 @@ Pokud HR za celý hovor nepromluvil, stav je `failed` s chybou „The interviewe
 
 ## 7. Call UI
 
-`src/components/meet/` je samostatná React komponenta, která napodobuje rozhraní Google Meet pro hovor 1:1. Místo Google brandingu používá název a logo firmy (`brand.ts`, `public/brand/logo.svg`).
+`src/components/meet/` je samostatná React komponenta, která napodobuje rozhraní Google Meet pro hovor 1:1. Místo Google brandingu používá **Shaar**: logo `@/components/logo` a název z `brand.ts`.
+
+Kvůli věrnému vzhledu Meetu má komponenta vlastní CSS modul místo Fragms tokenů. Je to vědomá výjimka z UI pravidel v `AGENTS.md` a týká se jen `src/components/meet/`.
 
 ### Obrazovky
 
@@ -299,7 +301,7 @@ Pokud HR za celý hovor nepromluvil, stav je `failed` s chybou „The interviewe
 
 ## 8. API
 
-Všechny routy kromě webhooků a `/api/dev/*` vyžadují `Authorization: Bearer <Supabase token>`. Úplný a vždy aktuální přehled je na `GET /api` a `/docs`.
+Všechny routy kromě webhooků a `/api/dev/*` vyžadují uživatele. Prohlížeč se prokazuje visitor cookie (volání přes `api()` ze `src/lib/client.ts`), oddělený klient `Authorization: Bearer <Supabase token>`. Úplný a vždy aktuální přehled je na `GET /api` a `/docs`.
 
 | Metoda | Cesta | Popis |
 |---|---|---|
@@ -455,9 +457,8 @@ src/components/meet/
   MeetCall.tsx        lobby, hovor, hodnocení, po odchodu
   meet.module.css     styly (světlé lobby a hodnocení, tmavá místnost)
   icons.ts            SVG ikony
-  brand.ts            název a logo firmy
+  brand.ts            název produktu (logo je @/components/logo)
 src/app/meet/         testovací stránka (/meet?agent=…&fixture=…)
-public/brand/logo.svg logo (zástupné)
 fixtures/candidates/  3 fiktivní kandidáti
 scripts/
   seed-candidates.ts  nahrání fixtures do Supabase

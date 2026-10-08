@@ -1,6 +1,5 @@
-/** Company branding shown in the call UI. Swap the name and drop the real logo into public/brand/. */
+/** Company branding shown in the call UI. The mark itself is the Shaar logo (`@/components/logo`). */
 export const BRAND = {
-  name: "Projstalker",
+  name: "Shaar",
   product: "Meet",
-  logo: "/brand/logo.svg",
 };

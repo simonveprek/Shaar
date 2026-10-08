@@ -123,8 +123,9 @@ The call UI is `src/components/meet/` (test page `/meet`); full feature docs: `d
 
 Base URL: `http://localhost:4000` locally, the Netlify site URL in production.
 
-**Auth:** every route except `/api/health`, `/api/connectors*` (GET) and webhooks requires
-`Authorization: Bearer <Supabase access token>` (frontend: `(await supabase.auth.getSession()).data.session.access_token`).
+**Auth:** every route except `/api/health`, `/api/connectors*` (GET) and webhooks needs a user, either
+`Authorization: Bearer <Supabase access token>` (a separate frontend with its own sign-in) or this site's
+signed `shaar_visitor` cookie, which `POST /api/discover` and `POST /api/research` create on first use.
 Users only ever see their own rows.
 
 **Errors** are always JSON `{ "error": string, "details"?: unknown }` with a proper status:
@@ -134,16 +135,19 @@ Users only ever see their own rows.
 | Method & route | Body / query | Response |
 | --- | --- | --- |
 | `GET /api` | | Machine-readable index of every route (method, path, auth, body fields + example, response example) |
-| `GET /docs` (page) | | Human docs: every route with curl examples. `/` redirects here |
+| `GET /docs` (page) | | Human docs: every route with curl examples |
 | `GET /api/health` | | `{ ok, time }` |
 | `GET /api/connectors` | | `{ connectors: [{ platform, label, targetHint, notes, actors: [{ actorId, role }] }] }` |
 | `GET /api/connectors/:platform` | | `{ connector }` |
 | `POST /api/connectors/:platform` | `{ target, maxPosts?, jobId?, subjectName? }` | 201 `{ job, runs }`. New job unless `jobId` given |
+| `POST /api/discover` | `{ name, purpose? }` | 201 `{ discovery }`: one Google search per platform for the name (Apify `apify/google-search-scraper`) |
+| `GET /api/discover/:id` | | `{ discovery }` with `status` searching, ready or failed and ranked `candidates` (profile links whose title matches the name, two per platform). The visitor confirms which are the person, then those go to `POST /api/research` as targets |
 | `POST /api/research` | `{ subjectName, notes?, targets: [{ platform, target, maxPosts? (1-500, default 30) }] }` (1-20 targets) | 201 `{ job, runs }` |
 | `GET /api/research` | `?limit=` (≤100) | `{ jobs: [job + personas(id, status, display_name, one_line_summary)] }` |
 | `GET /api/research/:id` | | `{ job, runs, persona, itemCounts: { [platform]: { profile?, post?, comment? } } }`; **also advances the job** |
 | `DELETE /api/research/:id` | | 204; deletes all data + the ElevenLabs agent |
 | `GET /api/research/:id/items` | `?platform=&kind=profile\|post\|comment&limit=(≤200)&offset=&raw=1` | `{ items, total, limit, offset }` |
+| `GET /api/research/:id/dossier` | | `{ dossier, jobStatus }`: the watcher's file (presence, routine heatmap in UTC, activity per month, circle, top posts, stated views, exposure 0-100). Exposure only, never a judgement. Rendered by `src/app/dossier/dossier-view.tsx`; `/dossier/sample` shows a fictional subject |
 | `POST /api/research/:id/persona` | | 202 `{ persona }` (regenerate; 409 while scraping) |
 | `GET /api/personas/:id` | | `{ persona }` (`persona.profile` is a `PersonaProfile`, see `src/lib/persona.ts`) |
 | `POST /api/personas/:id/interviews` | `{ voiceId?, transport?: "webrtc" (default) \| "websocket", difficulty?: "friendly" \| "realistic" (default) \| "tough" }` | 201 `{ interview, agentId, session: { conversationToken } \| { signedUrl } }`, plus `session.dynamicVariables` for candidate personas (409 if persona not ready) |
@@ -192,6 +196,16 @@ const decoder = new TextDecoder();
 for (let r; !(r = await reader.read()).done; ) append(decoder.decode(r.value, { stream: true }));
 ```
 
+### The page flow (src/app/landing.tsx)
+
+Gate opening → name → "What do we do with them" (Gather intelligence, Read them, Interrogate) →
+`POST /api/discover` and polling → "Is this them" (the visitor picks the found accounts) →
+`POST /api/research` with the picks and the purpose as notes → `/dossier/<job id>`, which polls
+`GET /api/research/:id/dossier` and fills in as sources finish. Visitors never sign up: on the first
+`POST /api/discover` or `POST /api/research` the server creates a Supabase user for them with the secret
+key and sets a signed httpOnly `shaar_visitor` cookie (`src/lib/auth.ts`). The browser just calls
+same-origin routes (`src/lib/client.ts`).
+
 ## 7. Data model (Supabase, `public` schema)
 
 | Table | Key columns |
@@ -200,6 +214,7 @@ for (let r; !(r = await reader.read()).done; ) append(decoder.decode(r.value, { 
 | `connector_runs` | `job_id`, `platform`, `target`, `actor_id`, `input`, `apify_run_id`, `dataset_id`, `status`, `item_count`, `error` |
 | `scraped_items` | `job_id`, `run_id`, `platform`, `kind` (profile/post/comment), `external_id`, `url`, `author`, `text`, `posted_at`, `metrics` (jsonb numbers), `media` (url array), `data` (raw Apify item). Unique `(run_id, external_id)` |
 | `personas` | `job_id` (unique), `status`, `model`, `openai_response_id`, `profile` (jsonb `PersonaProfile`), `candidate` (jsonb `CandidateBrief`, nullable), `voice_id`, `elevenlabs_agent_id` |
+| `discoveries` | `name`, `purpose`, `status` (searching/ready/failed), `apify_run_id`, `candidates` (jsonb) |
 | `interviews` | `persona_id`, `elevenlabs_conversation_id` (unique), `status`, `transcript`, `analysis`, `duration_secs`, `difficulty`, `feelings`, `feedback_status`, `feedback_response_id`, `feedback` (jsonb `StoredFeedback`), `feedback_error` |
 
 - RLS: `authenticated` users can **select** their own rows. There are **no insert/update policies**: all
@@ -227,11 +242,15 @@ src/
     candidate.ts          CandidateBrief schema, difficulty, HR-mode prompt section, reportFeeling tool name
     interviews.ts         ensureAgent, startInterview, syncInterview, feelings
     feedback.ts           candidate feedback: OpenAI background start/poll, quote validation, talk ratio
+    voices.ts             male/female stock voice from the persona's gender and age
+    dossier.ts            buildDossier: research data to the watcher's file (pure, no I/O)
+    dossier-sample.ts     a fictional subject for /dossier/sample
     elevenlabs.ts         REST client, TTS, webhook HMAC verification
     schemas.ts            zod request-body schemas (shared by routes and docs)
     api-catalog.ts        list of every route → GET /api and /docs
     apify.ts / openai.ts / supabase.ts   lazily created clients
-  app/docs/               the /docs page
+  app/docs/               the /docs page, built with the Fragms kit
+  components/ui, components/fragms, components/bits.tsx   Fragms Personal design system (see AGENTS.md, UI)
 ```
 
 Conventions:
@@ -246,8 +265,9 @@ Conventions:
   `check(...)` for writes whose result you don't use. Don't destructure `{ data, error }` manually.
 - **Env**: add new variables to the schema in `src/lib/env.ts` **and** to `.env.example`. Never read
   `process.env` directly elsewhere (except `src/proxy.ts` and the `NODE_ENV` guard in `/api/dev/*`). Secrets
-  never go to the browser. Code that only needs its own service uses `envVar("KEY")` (validates one variable)
-  instead of `env()` (validates all), so e.g. voice tests run with only an ElevenLabs key.
+  never go to the browser. A feature's own key goes through `need("KEY", "Feature")` (503 when unset);
+  other single values through `envVar("KEY")`. Both validate only that variable, not the whole `env()`, so
+  e.g. voice tests run with only an ElevenLabs key.
 - **`/api/dev/*`** routes are for local testing only and must 404 when `NODE_ENV === "production"`.
 - **Verify before shipping**: `npm run typecheck`, `npm run lint`, `npm run build`.
 

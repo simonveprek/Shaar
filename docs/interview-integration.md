@@ -79,39 +79,32 @@ npm run try:agent -- alex-novak --delete
 
 ## 2. Napojení frontendu
 
-### 2.1 Co zkopírovat do frontend repa
+### 2.1 Kde UI je
 
-| Odkud (tohle repo) | Kam (frontend) |
-|---|---|
-| `src/components/meet/` (`MeetCall.tsx`, `meet.module.css`, `icons.ts`, `brand.ts`) | stejná cesta |
-| `public/brand/logo.svg` | `public/brand/` (vyměnit za logo firmy) |
+Frontend (aplikace **Shaar**) je ve **stejném repu** jako API, takže se nic nekopíruje. Hovor je hotová komponenta `src/components/meet/MeetCall.tsx` s logem Shaar (`@/components/logo`). Název produktu se mění v `src/components/meet/brand.ts`. Závislost `@elevenlabs/react@1.16.0` už je v `package.json`.
 
-Dál nainstalovat:
+> Meet UI je záměrně 1:1 vzhled Google Meet, a proto má vlastní CSS modul (`meet.module.css`) místo Fragms tokenů. Je to vědomá výjimka z pravidel v `AGENTS.md` (sekce UI). Kdyby se mělo převést na Fragms (Tailwind tokeny, `Aura` jako mluvící koule), týká se to jen souborů v `src/components/meet/`.
 
-```bash
-npm install @elevenlabs/react@1.16.0
-```
-
-Komponenta potřebuje jen `react`, `next/font/google` a `@elevenlabs/react`. Ikony jsou vložené jako SVG, takže nezávisí na žádném externím fontu. Název firmy a logo se mění v `brand.ts`.
+Kdyby někdy vznikl oddělený frontend, zkopíruje se `src/components/meet/` a `src/components/logo.tsx` a nainstaluje se `@elevenlabs/react`.
 
 ### 2.2 Autentizace
 
-Všechna volání kromě webhooků posílají Supabase access token:
+Prohlížeč volá API na stejném originu přes helper `api()` ze `src/lib/client.ts`. Návštěvník se nikde nepřihlašuje. Server mu při prvním spuštění hledání nebo jobu vytvoří tichého uživatele a pozná ho podle podepsané httpOnly cookie `shaar_visitor` (`src/lib/auth.ts`). Oddělený frontend s vlastním přihlášením může místo cookie posílat `Authorization: Bearer <Supabase access token>`.
 
 ```ts
-const token = (await supabase.auth.getSession()).data.session?.access_token;
-const api = (path: string, init: RequestInit = {}) =>
-  fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
-    ...init,
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...init.headers },
-  });
+import { api, ApiError } from "@/lib/client";
+
+const { persona } = await api<{ persona: Persona }>(`/api/personas/${personaId}`);
+// chyba → throw ApiError(status, message), 5xx s obecnou hláškou pro uživatele
 ```
+
+Kandidáti nahraní přes `seed:candidates` patří konkrétnímu uživateli. Pro demo s visitor cookie je potřeba nahrát je pod ID návštěvníka, nebo použít Bearer token uživatele, pod kterým se nahrály.
 
 Chyby mají vždy tvar `{ error: string, details?: unknown }` se správným HTTP statusem:
 
 | Status | Význam |
 |---|---|
-| 401 | neplatný token |
+| 401 | neznámý návštěvník nebo neplatný token |
 | 404 | záznam neexistuje nebo patří jinému uživateli |
 | 409 | špatný stav, např. persona ještě není `ready` |
 | 502 | chyba ElevenLabs |
@@ -131,6 +124,7 @@ Pro UI se používá:
 "use client";
 import { useRef } from "react";
 import { useRouter } from "next/navigation";
+import { api } from "@/lib/client";
 import { MeetCall, type CandidateFeedback, type FeelingEvent } from "@/components/meet/MeetCall";
 
 export function InterviewRoom({ personaId, name, role }: { personaId: string; name: string; role?: string }) {
@@ -141,14 +135,12 @@ export function InterviewRoom({ personaId, name, role }: { personaId: string; na
     <MeetCall
       candidate={{ name, subtitle: role }}
       connect={async (difficulty) => {
-        const res = await api(`/api/personas/${personaId}/interviews`, {
-          method: "POST",
-          body: JSON.stringify({ difficulty }),
-        });
-        const body = await res.json();
-        if (!res.ok) throw new Error(body.error);
-        interviewId.current = body.interview.id;
-        return body.session; // { conversationToken, dynamicVariables }: předat CELÉ
+        const { interview, session } = await api<{ interview: { id: string }; session: Record<string, unknown> }>(
+          `/api/personas/${personaId}/interviews`,
+          { method: "POST", body: JSON.stringify({ difficulty }) },
+        );
+        interviewId.current = interview.id;
+        return session; // { conversationToken, dynamicVariables }: předat CELÉ
       }}
       onFeelings={(events: FeelingEvent[]) =>
         api(`/api/interviews/${interviewId.current}/feelings`, {
@@ -208,7 +200,7 @@ Hodnocení umí zobrazit přímo `MeetCall` přes `loadFeedback` (2.4). Vlastní
 ```ts
 async function waitForFeedback(id: string) {
   for (;;) {
-    const { interview } = await (await api(`/api/interviews/${id}`)).json();
+    const { interview } = await api<{ interview: Interview }>(`/api/interviews/${id}`);
     if (interview.feedback_status === "ready") return interview;
     if (interview.feedback_status === "failed") throw new Error(interview.feedback_error);
     await new Promise((r) => setTimeout(r, 3000));
@@ -255,8 +247,11 @@ K tomu jsou k dispozici:
 **Feedback namluvený hlasem kandidáta (volitelné):**
 
 ```ts
-const audio = await api("/api/voice/tts", {
+// TTS vrací audio, ne JSON, takže tady fetch místo api():
+const audio = await fetch("/api/voice/tts", {
   method: "POST",
+  credentials: "same-origin",
+  headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ text: feedback.overall_feeling, voiceId: persona.voice_id }),
 });
 new Audio(URL.createObjectURL(await audio.blob())).play();
@@ -307,7 +302,7 @@ Místo pollingu jde použít i **Supabase Realtime** na tabulce `interviews`, pr
 - [ ] Migrace spuštěná, kód nasazený, env vyplněné (1.2, 1.3)
 - [ ] Post-call webhook nastavený (1.4)
 - [ ] Kandidáti nahraní pod demo účet (1.5)
-- [ ] Logo a název firmy v `brand.ts` a `public/brand/`
+- [ ] Kandidáti nahraní pod uživatele, se kterým se demuje (visitor nebo Bearer, viz 2.2)
 - [ ] Testovací agenti ze `try:agent` smazaní, API klíče zrotované (ten z chatu!)
 - [ ] Zkušební hovor na produkční URL přes HTTPS: lobby → hovor → feedback do 1 minuty
 - [ ] Sluchátka s mikrofonem, ať kandidát neslyší sám sebe
