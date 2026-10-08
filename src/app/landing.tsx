@@ -4,7 +4,8 @@ import { AnimatePresence, motion, useReducedMotion, type TargetAndTransition } f
 import { Fragment, useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import { Aura, type AuraColors } from "@/components/fragms";
 import { Logo } from "@/components/logo";
-import { cx, EASE } from "@/components/ui";
+import { CornerDownLeftIcon } from "@hugeicons/core-free-icons";
+import { cx, EASE, Icon, Kbd } from "@/components/ui";
 
 /*
  * Shaar. The gate. Black, one question, and light coming from under the
@@ -191,7 +192,7 @@ export function Landing() {
         {sent ? (
           <Subject name={sent} reduce={reduce} onConfirmed={() => (sentAt.current = performance.now())} onReset={reset} />
         ) : (
-          <form onSubmit={submit} className="col-start-1 row-start-1 grid w-full place-items-center">
+          <form onSubmit={submit} className="relative col-start-1 row-start-1 grid w-full place-items-center">
             <label htmlFor="subject" className="sr-only">
               {QUESTION}
             </label>
@@ -214,6 +215,25 @@ export function Landing() {
               )}
             />
             <AnimatePresence>{!name && <Question key="question" first={!arrived} reduce={reduce} />}</AnimatePresence>
+            {/* The return key, so it is clear a name is sent with Enter. Also a tap target on phones. */}
+            <AnimatePresence>
+              {name.trim() && (
+                <motion.button
+                  key="enter"
+                  type="submit"
+                  aria-label="Search"
+                  title="Enter"
+                  className="group absolute top-full left-1/2 mt-5 -translate-x-1/2 cursor-pointer p-2"
+                  initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
+                  animate={{ opacity: 1, filter: "blur(0px)", transition: { duration: 0.25, ease: EASE } }}
+                  exit={dissolve}
+                >
+                  <Kbd className="h-7 min-w-7 rounded-item px-2 transition-colors duration-150 group-hover:bg-control-hover group-hover:text-foreground">
+                    <Icon icon={CornerDownLeftIcon} size={14} />
+                  </Kbd>
+                </motion.button>
+              )}
+            </AnimatePresence>
           </form>
         )}
       </div>
