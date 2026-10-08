@@ -8,6 +8,7 @@ Tento dokument popisuje celou feature: jak funguje, z čeho se skládá a jak ji
 |---|---|
 | **tento soubor** | přehled a referenční popis feature |
 | [interview-integration.md](interview-integration.md) | nasazení a napojení frontendu krok za krokem |
+| [interview-simulator-agent-guide.md](interview-simulator-agent-guide.md) | **pro AI agenty** (anglicky): jak feature implementovat i v jiném projektu nebo stacku, kontrakty, prompty, ověřené pasti |
 | [interview-simulator-spec.md](interview-simulator-spec.md) | původní návrh, rozhodnutí a stav implementace |
 | [be.md](../be.md) | obecná pravidla backendu (Netlify 60 s, claimy, RLS) |
 

@@ -10,6 +10,10 @@ every API route and its response shape, the data model, and rules you must keep.
 nothing may block a request for long (Netlify's 60 s limit), state transitions must stay idempotent,
 and every query made with the secret key must be scoped to the user.
 
+**Working on the interview simulator** (voice interview with a candidate persona, mood, candidate feedback)
+or porting it to another project: read [`docs/interview-simulator-agent-guide.md`](docs/interview-simulator-agent-guide.md).
+It has the contracts, prompts, agent config, state machines and verified pitfalls.
+
 ## UI: the Fragms design language
 
 Every screen in Projstalker, here and in the frontend, uses **Fragms Personal**, Šimon's design system.
