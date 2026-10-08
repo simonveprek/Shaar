@@ -9,7 +9,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint",
     "seed:candidates": "tsx --env-file-if-exists=.env.local scripts/seed-candidates.ts",
-    "try:agent": "tsx --env-file-if-exists=.env.local scripts/try-agent.ts"
+    "try:agent": "tsx --env-file-if-exists=.env.local scripts/try-agent.ts",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

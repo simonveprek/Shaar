@@ -320,7 +320,9 @@ the build succeeds without them.
 - **X** needs a paid Apify plan (free plan = demo mode, 10 items). **Facebook** works for pages, not
   personal profiles. **YouTube** channel listings can have relative dates (stored as null).
 - **No caching** of scrapes across jobs yet: researching the same handle twice pays twice.
-- No automated tests yet; connector normalizers are the best place to start (pure functions).
+- Tests live in `tests/` and run with `npm test` (Node's test runner through tsx). They cover the pure parts:
+  `linksToFollow`, discovery matching, every connector's `normalize`, `buildDossier` and the agent prompt. Add one
+  when you change any of those.
 - Interviews use stock ElevenLabs voices. Don't add voice cloning of the real person without their consent.
 
 ## 11. Responsible use (keep these properties)
