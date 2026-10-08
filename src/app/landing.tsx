@@ -2,6 +2,7 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { Aura, type AuraColors } from "@/components/fragms";
+import { Logo } from "@/components/logo";
 
 /*
  * The front door. Black, one field for a name, and a cold glow along the
@@ -49,6 +50,8 @@ export function Landing() {
       >
         <Aura palette={ASH} level={level} intensity={1.4} speed={sent ? 0.35 : 0.08} radius={0} className="h-full w-full" />
       </div>
+
+      <Logo className="absolute top-6 left-6 h-7 w-auto text-foreground sm:top-8 sm:left-8" />
 
       {sent ? (
         <button
