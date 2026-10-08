@@ -32,17 +32,20 @@ async function MeetFromQuery({ searchParams }: Pick<PageProps<"/meet">, "searchP
 
   if (!agentId) {
     return (
-      <main style={{ maxWidth: 640, margin: "64px auto", padding: "0 16px", fontFamily: "Roboto, Arial, sans-serif", lineHeight: 1.6 }}>
-        <h1 style={{ fontWeight: 400 }}>
-          {BRAND.name} {BRAND.product}: test mode
-        </h1>
-        <p>Open this page with a public candidate agent:</p>
-        <pre style={{ background: "#f1f3f4", padding: 12, borderRadius: 8, whiteSpace: "pre-wrap" }}>
-          /meet?agent=agent_…&amp;fixture=alex-novak&amp;name=Alex%20Novak&amp;role=Senior%20Frontend%20Engineer
-        </pre>
-        <p>
-          Create one with <code>npm run try:agent -- alex-novak --feelings</code>; it prints the full link.
-        </p>
+      <main className="dark grid min-h-svh place-items-center bg-background px-5 text-foreground">
+        <div className="w-full max-w-[560px]">
+          <p className="text-[11px] font-medium tracking-[0.22em] text-muted uppercase">Test mode</p>
+          <h1 className="mt-4 text-title">
+            {BRAND.name} {BRAND.product}
+          </h1>
+          <p className="mt-4 text-body text-muted">Open this page with a public candidate agent.</p>
+          <pre className="mt-4 overflow-x-auto rounded-field border border-border bg-well p-4 font-mono text-caption">
+            /meet?agent=agent_…&amp;fixture=alex-novak&amp;name=Alex%20Novak&amp;role=Senior%20Frontend%20Engineer
+          </pre>
+          <p className="mt-4 text-label text-muted">
+            Create one with <code className="font-mono">npm run try:agent -- alex-novak --feelings</code>. It prints the full link.
+          </p>
+        </div>
       </main>
     );
   }

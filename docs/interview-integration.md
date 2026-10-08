@@ -83,9 +83,9 @@ npm run try:agent -- alex-novak --delete
 
 Frontend (aplikace **Shaar**) je ve **stejném repu** jako API, takže se nic nekopíruje. Hovor je hotová komponenta `src/components/meet/MeetCall.tsx` s logem Shaar (`@/components/logo`). Název produktu se mění v `src/components/meet/brand.ts`. Závislost `@elevenlabs/react@1.16.0` už je v `package.json`.
 
-> Meet UI je záměrně 1:1 vzhled Google Meet, a proto má vlastní CSS modul (`meet.module.css`) místo Fragms tokenů. Je to vědomá výjimka z pravidel v `AGENTS.md` (sekce UI). Kdyby se mělo převést na Fragms (Tailwind tokeny, `Aura` jako mluvící koule), týká se to jen souborů v `src/components/meet/`.
+> Meet UI má rozložení Google Meet, ale je nakreslené v design systému Fragms podle `AGENTS.md`: kit, Tailwind tokeny, tmavý Shaar a `Aura` jako mluvící koule.
 
-Kdyby někdy vznikl oddělený frontend, zkopíruje se `src/components/meet/` a `src/components/logo.tsx` a nainstaluje se `@elevenlabs/react`.
+Kdyby někdy vznikl oddělený frontend, zkopíruje se `src/components/meet/` a `src/components/logo.tsx`, k tomu sada Fragms podle návodu v `AGENTS.md` (sekce UI), a nainstaluje se `@elevenlabs/react`.
 
 ### 2.2 Autentizace
 
