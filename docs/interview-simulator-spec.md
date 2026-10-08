@@ -1,473 +1,323 @@
 # Interview Simulator: specifikace a implementační plán
 
-> Část projektu **projstalker**: z nascrapovaných dat vytvoří profil kandidáta, z profilu udělá hlasovou AI personu (ElevenLabs Agents) a HR si s ní nanečisto vyzkouší pohovor. Po pohovoru dá „kandidát“ zpětnou vazbu, jak se u pohovoru cítil.
+> Moje část projektu **projstalker**: HR si nanečisto vyzkouší pohovor s hlasovou AI, která hraje konkrétního kandidáta (persona ze scrapingu), a po hovoru dostane od „kandidáta“ zpětnou vazbu, jak se u pohovoru cítil.
+>
+> Plán navazuje na existující backend (viz [`be.md`](../be.md)). **Počítá s tím, že scraping a tvorba persony ještě nejsou hotové.** Celá moje část proto zatím jede nad ručně připravenými kandidáty (fixtures) a na reálná data se napojí až nakonec.
 
 | | |
 |---|---|
-| **Stack** | Node.js (backend), Next.js (frontend), Apify (scraping), ElevenLabs Agents Platform (hlas), OpenAI API (profil, persona, feedback) |
+| **Backend** | tohle repo: Next.js 16, jen API routes, Netlify (**limit 60 s na request**), Supabase |
+| **Frontend** | samostatná Next.js aplikace (port 3000), mluví s API přes `Authorization: Bearer <supabase token>` |
+| **Hlas** | ElevenLabs Agents, prohlížeč přes `@elevenlabs/react` v1 (`<ConversationProvider>`) |
+| **LLM** | OpenAI Responses API, dlouhé úlohy v **background mode** |
 | **Jazyk pohovoru** | angličtina |
 | **Režim** | HR (člověk) ↔ AI simulace kandidáta |
-| **Výstup po pohovoru** | zpětná vazba kandidáta: jak se cítil, co bylo dobré, co nepříjemné a co by HR mělo dělat jinak |
 
 ---
 
-## 1. Cíl a hodnota pro demo
+## 1. Co už existuje a co přidávám
 
-1. HR otevře profil kandidáta, který vznikl ze scrapingu (LinkedIn, GitHub, Instagram, …).
-2. Klikne na **„Start practice interview“** a mluví s hlasovou AI, která se chová jako ten konkrétní kandidát: zná svoji kariéru, projekty a koníčky, má vlastní motivace a obavy a nevyklopí všechno hned.
-3. Během hovoru vidí HR živý přepis a **„měřák pocitů“** kandidáta (stretch, ale na demu působí velmi dobře).
-4. Po skončení dostane HR **candidate experience feedback** napsaný v první osobě („Felt rushed when you asked about…“), skóre, citace konkrétních momentů a seznam věcí, které **nezjistil**, i když je mohl.
+### Už hotové (nesahat, jen použít)
 
-Pointa pro porotu: *„Trénuj pohovor na digitálním dvojčeti skutečného kandidáta, dřív než s ním budeš mluvit doopravdy.“*
+| Co | Kde |
+|---|---|
+| Research job → Apify → `scraped_items` → OpenAI persona (`PersonaProfile`) | `src/lib/research.ts`, `src/lib/persona.ts` |
+| Agent v ElevenLabs pro každou personu (systémový prompt zůstává na serveru) | `ensureAgent` v `src/lib/interviews.ts`, `agentConfig` v `src/lib/elevenlabs.ts` |
+| `POST /api/personas/:id/interviews` vrací `{ interview, session: { conversationToken } }` | WebRTC, `conversation_id` je známé hned |
+| Přepis po hovoru přes webhook i polling | `POST /api/webhooks/elevenlabs`, `GET /api/interviews/:id` → `syncInterview` |
+| TTS | `POST /api/voice/tts` (použiju pro namluvený feedback) |
+| Katalog API a docs | `src/lib/api-catalog.ts` → `GET /api`, `/docs` |
 
----
+### Co přidávám
 
-## 2. Architektura
-
-```
-┌───────────────┐   raw data    ┌──────────────────────┐
-│ Scraper (tým) │──────────────▶│ POST /candidates     │
-│ Apify actors  │               │ (Node backend)       │
-└───────────────┘               └──────────┬───────────┘
-                                           │ OpenAI (structured output)
-                                           ▼
-                                ┌──────────────────────┐
-                                │ CandidateProfile     │  ← co o kandidátovi víme (fakta + zdroje)
-                                └──────────┬───────────┘
-                                           │ OpenAI
-                                           ▼
-                                ┌──────────────────────┐
-                                │ CandidatePersona     │  ← jak mluví a co cítí + skryté info
-                                └──────────┬───────────┘
-                                           │
-     ┌─────────────────────────────────────┼───────────────────────────────┐
-     │ Next.js                             │                               │
-     │  /candidates/[id]  ──POST /sessions─┘                               │
-     │                     ◀── { signedUrl, dynamicVariables, voiceId }    │
-     │                                                                     │
-     │  @elevenlabs/react useConversation ◀═══ WebRTC/WS ═══▶ ElevenLabs   │
-     │   - živý přepis (onMessage)                         Agent (LLM=OpenAI)
-     │   - client tool reportFeeling → „mood meter“                        │
-     │                                                                     │
-     │  konec hovoru ──POST /sessions/:id/finish──▶ backend                │
-     └─────────────────────────────────────────────────────────────────────┘
-                                           │ GET /v1/convai/conversations/{id}
-                                           ▼
-                                ┌──────────────────────┐
-                                │ Transcript           │
-                                └──────────┬───────────┘
-                                           │ OpenAI (persona + transcript)
-                                           ▼
-                                ┌──────────────────────┐
-                                │ CandidateFeedback    │ → /sessions/[id]/feedback
-                                └──────────────────────┘   (volitelně přečteno hlasem kandidáta, ElevenLabs TTS)
-```
-
-**Klíčová rozhodnutí**
-
-- **Jeden základní agent v ElevenLabs** (vytvoří se jednou skriptem). Persona se do něj vkládá při každém spuštění přes **dynamic variables**. Hlas se mění per kandidát přes **override `tts.voiceId`**. Nevytváříme tedy agenta pro každého kandidáta, což je rychlejší a nic se nemusí uklízet.
-- **API klíč ElevenLabs nikdy na frontendu.** Backend vydá **signed URL** (`GET /v1/convai/conversation/get-signed-url?agent_id=…`, platí 15 minut) a frontend s ní spustí session.
-- **LLM uvnitř agenta je OpenAI.** Buď vybereme OpenAI model ze seznamu LLM v nastavení agenta (nejjednodušší), nebo použijeme *Custom LLM* s vlastním OpenAI klíčem. Profil, personu i feedback generuje backend přímo přes OpenAI API.
-- **Agent mluví až jako druhý.** Na pohovoru začíná HR, proto má agent prázdný `first_message` a čeká, až HR promluví.
+1. **Kandidátská vrstva persony**: cílová pozice, motivace, obavy, skrytá fakta a další věci, které z persony udělají *kandidáta na pohovoru*.
+2. **Fixtures a seed**: 2–3 ručně připravení kandidáti, aby šlo vyvíjet a demovat bez scrapingu.
+3. **Úpravy agenta**: HR mode prompt, obtížnost jako dynamic variable, client tool `reportFeeling`.
+4. **Feedback kandidáta po hovoru**: OpenAI v background mode, uložení k `interviews`.
+5. **Mood timeline**: ukládání pocitů kandidáta z hovoru.
+6. **Frontend stránky** pro hovor a feedback.
 
 ---
 
-## 3. Datový kontrakt se scraper týmem
+## 2. Tok dat
 
-Tohle si musíme odsouhlasit jako první, aby obě části mohly běžet paralelně. Scraper pošle syrová data, normalizaci a interpretaci dělá moje část.
-
-```ts
-// POST /candidates  (body)
-type ScrapedCandidateInput = {
-  fullName: string;
-  targetRole?: string;              // na jakou pozici se hlásí (zadá HR)
-  jobDescription?: string;          // volitelně text inzerátu
-  sources: {
-    linkedin?: unknown;             // raw dataset item z Apify actoru
-    github?: unknown;               // profil + repos (+ README top repozitářů)
-    instagram?: unknown;            // bio + posledních N postů (caption, datum)
-    other?: { url: string; text: string }[];
-  };
-};
+```
+             (dnes)                                  (až bude scraping ready)
+  fixtures/candidates/*.json                    POST /api/research {targetRole, …}
+            │ npm run seed:candidates                     │ Apify → OpenAI
+            ▼                                             ▼
+  research_jobs (ready) + personas (ready, profile.candidate vyplněné)
+            │
+            ▼
+  POST /api/personas/:id/interviews { difficulty, voiceId? }
+     └─ ensureAgent (HR-mode prompt + reportFeeling tool)
+     └─ { interview, session: { conversationToken, dynamicVariables: { difficulty } } }
+            │
+            ▼  prohlížeč: conversation.startSession(session)   ◀══ WebRTC ══▶ ElevenLabs
+            │    clientTools.reportFeeling → POST /api/interviews/:id/feelings
+            │
+  hovor skončí → webhook / GET /api/interviews/:id → status done
+            │   claim feedback_status none→generating → OpenAI background response
+            ▼
+  GET /api/interviews/:id (polling) → poll OpenAI → validace citací → feedback (ready)
 ```
 
-Na co se scraper tým zeptat:
-- Které Apify actory přesně (kvůli tvaru JSON). Na začátek stačí **jeden ukázkový JSON od každého zdroje**, nad ním postavím parser a prompty.
-- Volá backend Apify sám (`apify-client`), nebo dostanu hotová data? **Návrh:** scraping řeší jejich modul, já dostanu výsledek přes `POST /candidates` nebo přes sdílenou funkci.
+Klíčové pravidlo z `be.md` platí i pro mě: **žádný request nesmí čekat na pomalou práci.** Generování feedbacku proto běží v OpenAI background mode a posouvá ho `GET /api/interviews/:id` a webhook. Přechody stavů dělám přes podmíněný update („claim“).
 
 ---
 
-## 4. Datové modely
+## 3. Datový model
 
-### 4.1 CandidateProfile (fakta, generuje OpenAI ze scrapingu)
+### 3.1 Kandidátská vrstva v `PersonaProfile`
+
+`PersonaProfile` (`src/lib/persona.ts`) rozšířím o nullable objekt `candidate`. Je to strict structured output, takže pole musí být `nullable`, ne `optional`. Fixtures ho vyplní ručně. Až bude scraping hotový, vyplní ho OpenAI ve stejném běhu, který staví personu.
 
 ```ts
-type CandidateProfile = {
-  id: string;
-  fullName: string;
-  headline: string;                     // "Senior Frontend Engineer @ X"
-  location?: string;
-  summary: string;                      // 3–5 vět
-  experience: { company: string; title: string; from?: string; to?: string; highlights: string[] }[];
-  education: { school: string; degree?: string; year?: string }[];
-  skills: { name: string; evidence: string; source: "linkedin" | "github" | "instagram" | "other" }[];
-  projects: { name: string; description: string; tech: string[]; url?: string }[];   // hlavně GitHub
-  interests: string[];                  // hlavně Instagram
-  communicationStyle: string;           // odvozeno z textů: formální / ležérní / technický …
-  notableFacts: { fact: string; source: string }[];
-  gapsAndQuestions: string[];           // mezery v CV, krátké úvazky, nejasnosti → témata k pohovoru
-  confidence: "low" | "medium" | "high";
-};
+candidate: z.object({
+  target_role: z.string(),                 // "Senior Frontend Engineer"
+  career_summary: z.string(),              // 2–3 věty, ze kterých agent mluví o kariéře
+  experience: z.array(z.object({ company: z.string(), title: z.string(), period: z.string().nullable(), highlights: z.array(z.string()) })),
+  projects: z.array(z.object({ name: z.string(), description: z.string(), tech: z.array(z.string()) })),
+  motivations: z.array(z.string()),        // proč hledá práci
+  concerns: z.array(z.string()),           // remote, přesčasy, tech debt…
+  deal_breakers: z.array(z.string()),
+  salary_expectation: z.string().nullable(),
+  hidden_facts: z.array(z.object({         // prozradí jen při dobré otázce nebo dobrém rapportu
+    fact: z.string(),
+    reveal_when: z.string(),
+  })),
+  questions_for_interviewer: z.array(z.string()),
+  invented: z.array(z.string()),           // co není podložené daty (u fixtures všechno označené)
+}).nullable()
 ```
 
-> Každé tvrzení musí mít **zdroj**. Halucinace v profilu jsou největší riziko celého projektu, proto prompt explicitně říká: „pokud to v datech není, nevymýšlej“.
+> ⚠️ `persona.ts` patří do společné části. Změnu schématu a promptu je potřeba **domluvit s autorem persona pipeline**. Druhá varianta je samostatný sloupec `personas.candidate`, kdyby kolega nechtěl měnit `PersonaProfile`. Kód kolem je v obou variantách stejný.
 
-### 4.2 CandidatePersona (pro simulaci)
+`hidden_facts` jsou jádro tréninkové hodnoty: dobrý interviewer je z kandidáta dostane, špatný ne. Feedback pak ukáže, co zůstalo neodhaleno.
 
-Profil = co víme. Persona = **jak se kandidát chová**, plus doplněné věci, které ze scrapingu vědět nemůžeme. Všechno doplněné je označené jako `invented`.
+### 3.2 Migrace `supabase/migrations/20261009000000_interview_feedback.sql`
 
-```ts
-type CandidatePersona = {
-  candidateId: string;
-  displayName: string;
-  voice: { gender: "male" | "female" | "neutral"; ageRange: string; accent?: string; voiceId: string };
-  speakingStyle: string;          // "short answers, nervous at start, warms up when talking about Rust"
-  personality: { openness: 1|2|3|4|5; confidence: 1|2|3|4|5; talkativeness: 1|2|3|4|5 };
-  motivations: string[];          // proč hledá práci
-  concerns: string[];             // čeho se bojí (remote policy, overtime, tech debt…)
-  dealBreakers: string[];
-  salaryExpectation: string;      // invented, pokud není známo
-  hiddenFacts: { fact: string; revealWhen: string }[];   // co prozradí jen při dobré otázce / dobrém rapportu
-  sensitiveTopics: string[];      // kde se cítí nekomfortně
-  invented: string[];             // seznam polí/tvrzení, která nejsou ze scrapingu
-  difficulty: "friendly" | "realistic" | "tough";
-};
+Nová migrace, žádnou existující neupravuju:
+
+```sql
+alter table public.research_jobs
+  add column target_role text,
+  add column job_description text;
+
+alter table public.interviews
+  add column difficulty text not null default 'realistic'
+    check (difficulty in ('friendly', 'realistic', 'tough')),
+  add column feelings jsonb not null default '[]'::jsonb,   -- [{ t, feeling, intensity, reason }]
+  -- none -> generating -> ready | failed
+  add column feedback_status text not null default 'none'
+    check (feedback_status in ('none', 'generating', 'ready', 'failed')),
+  add column feedback_response_id text,
+  add column feedback jsonb,
+  add column feedback_error text;
 ```
 
-`hiddenFacts` + `revealWhen` jsou jádro tréninkové hodnoty: dobrý interviewer je z kandidáta dostane, špatný ne. Feedback pak ukáže, co zůstalo neodhaleno.
+`interviews` je už v Realtime publikaci, takže frontend se může na feedback přihlásit odběrem a nemusí pollovat. Lokálně ale polling stejně potřeba je, protože ten feedback posouvá.
 
-### 4.3 InterviewSession
-
-```ts
-type InterviewSession = {
-  id: string;
-  candidateId: string;
-  elevenConversationId?: string;
-  status: "created" | "live" | "finished" | "feedback_ready" | "failed";
-  difficulty: CandidatePersona["difficulty"];
-  startedAt?: string; endedAt?: string;
-  transcript?: { role: "interviewer" | "candidate"; text: string; timeInCallSecs?: number }[];
-  feelingTimeline?: { t: number; feeling: string; intensity: number; reason: string }[];
-  feedback?: CandidateFeedback;
-};
-```
-
-### 4.4 CandidateFeedback (hlavní výstup)
+### 3.3 `CandidateFeedback` (nový soubor `src/lib/feedback.ts`)
 
 ```ts
-type CandidateFeedback = {
-  overallFeeling: string;               // 2–4 věty v 1. osobě: "Honestly, I felt…"
-  wouldAcceptOffer: "yes" | "maybe" | "no";
-  wouldRecommendCompany: number;        // 0–10 (candidate NPS)
-  scores: {                             // 1–5
-    rapport: number; clarityOfQuestions: number; respect: number;
-    relevanceToMyExperience: number;    // ptal se na moje skutečné projekty?
-    companyPitch: number;               // dozvěděl jsem se, proč tam chtít pracovat?
-  };
-  highlights: { quote: string; why: string }[];      // momenty, které kandidát ocenil (citace z přepisu)
-  lowlights: { quote: string; why: string }[];       // momenty, kdy byl nekomfortně / zmatený / odrazený
-  inappropriateQuestions: { quote: string; issue: string }[];  // věk, rodina, zdraví, náboženství… (diskriminační riziko)
-  unansweredCandidateQuestions: string[];             // na co se kandidát chtěl zeptat a nedostal prostor
-  undiscovered: string[];                             // hiddenFacts, které HR nevytáhlo
-  talkRatio: { interviewer: number; candidate: number };  // spočítá se deterministicky z přepisu, ne LLM
-  tipsForInterviewer: string[];                       // 3–5 konkrétních, akčních tipů
-  glassdoorStyleReview: string;                       // "Co bych napsal kamarádům" (vtipné na demo)
-};
+export const CandidateFeedback = z.object({
+  overall_feeling: z.string(),                       // 2–4 věty v 1. osobě
+  would_accept_offer: z.enum(["yes", "maybe", "no"]),
+  would_recommend_company: z.number(),               // 0–10, candidate NPS
+  scores: z.object({                                 // 1–5
+    rapport: z.number(), clarity_of_questions: z.number(), respect: z.number(),
+    relevance_to_my_experience: z.number(), company_pitch: z.number(),
+  }),
+  highlights: z.array(z.object({ quote: z.string(), why: z.string() })),
+  lowlights: z.array(z.object({ quote: z.string(), why: z.string() })),
+  inappropriate_questions: z.array(z.object({ quote: z.string(), issue: z.string() })),
+  unanswered_candidate_questions: z.array(z.string()),
+  undiscovered: z.array(z.string()),                 // hidden_facts, které HR nevytáhlo
+  tips_for_interviewer: z.array(z.string()),
+  glassdoor_style_review: z.string(),
+});
+// Deterministicky dopočítáno serverem (ne LLM): talk_ratio { interviewer, candidate }, word counts.
 ```
 
 ---
 
-## 5. Backend (Node.js)
+## 4. Backend: změny po souborech
 
-**Doporučení:** Express nebo Fastify + TypeScript, `openai`, `zod` (validace a structured outputs), úložiště na hackathon klidně SQLite (`better-sqlite3`) nebo JSON soubory. ElevenLabs volat přímo přes REST (`fetch`) nebo `@elevenlabs/elevenlabs-js`.
+| Soubor | Změna |
+|---|---|
+| `supabase/migrations/2026100900…_interview_feedback.sql` | nové sloupce (3.2) |
+| `src/lib/persona.ts` | `candidate` v `PersonaProfile`, úprava `SYSTEM_PROMPT` (kandidátská vrstva, nic citlivého), `agentSystemPrompt` rozšířený o HR-mode blok (kap. 5) |
+| `src/lib/elevenlabs.ts` | `agentConfig`: client tool `reportFeeling`, delší turn timeout, max délka hovoru |
+| `src/lib/interviews.ts` | `startInterview` přijme `difficulty`, uloží ho a vrátí `session.dynamicVariables`. `syncInterview` po `done` zavolá `advanceFeedback` |
+| `src/lib/feedback.ts` *(nový)* | `CandidateFeedback`, `startFeedback` (claim + background response), `advanceFeedback` (poll + validace citací + talk ratio) |
+| `src/lib/schemas.ts` | `StartInterview.difficulty`, `ReportFeelings`, `CreateJob.targetRole/jobDescription` |
+| `src/app/api/interviews/[id]/feelings/route.ts` *(nový)* | `POST` uloží dávku pocitů |
+| `src/app/api/interviews/[id]/feedback/route.ts` *(nový)* | `POST` vynutí přegenerování feedbacku |
+| `src/app/api/webhooks/elevenlabs/route.ts` | po `applyConversation` spustí `startFeedback` |
+| `src/lib/voices.ts` *(nový)* | mapa ~6 stock hlasů podle `profile.voice` (pohlaví × věk), použije se, když frontend nepošle `voiceId` |
+| `src/lib/api-catalog.ts` | záznamy pro nové a změněné routes |
+| `src/lib/env.ts` + `.env.example` | `OPENAI_FEEDBACK_MODEL` (default = persona model) |
+| `fixtures/candidates/*.json` + `scripts/seed-candidates.ts` + `package.json` script | seed bez scrapingu (kap. 6) |
 
-### 5.1 Endpointy
+### 4.1 API: nové a změněné routes
 
-| Metoda | Cesta | Popis |
+| Metoda | Cesta | Změna |
 |---|---|---|
-| `POST` | `/candidates` | Přijme `ScrapedCandidateInput` → vygeneruje `CandidateProfile` → uloží → vrátí `id` |
-| `GET` | `/candidates/:id` | Profil + persona (pokud existuje) |
-| `POST` | `/candidates/:id/persona` | Body `{ difficulty }` → vygeneruje / přegeneruje `CandidatePersona` vč. výběru hlasu |
-| `POST` | `/sessions` | Body `{ candidateId, difficulty }` → vytvoří session, vrátí `{ sessionId, signedUrl, dynamicVariables, overrides }` |
-| `POST` | `/sessions/:id/events` | (volitelné) uložení `feelingTimeline` událostí z client toolu |
-| `POST` | `/sessions/:id/finish` | Body `{ conversationId }` → stáhne přepis z ElevenLabs → spustí generování feedbacku |
-| `GET` | `/sessions/:id` | Stav + přepis + feedback (frontend polluje, dokud není `feedback_ready`) |
-| `GET` | `/sessions/:id/feedback/audio` | (stretch) feedback namluvený hlasem kandidáta přes ElevenLabs TTS |
+| `POST` | `/api/personas/:id/interviews` | body navíc `difficulty?: "friendly" \| "realistic" \| "tough"`; `session` navíc `dynamicVariables: { difficulty }` |
+| `GET` | `/api/interviews/:id` | navíc posouvá feedback; vrací `feelings`, `feedback_status`, `feedback` |
+| `POST` | `/api/interviews/:id/feelings` | `{ events: [{ t, feeling, intensity, reason }] }` (frontend posílá v dávkách po ~10 s a při konci) |
+| `POST` | `/api/interviews/:id/feedback` | přegeneruje feedback (409, dokud hovor není `done`) |
+| `POST` | `/api/research` | body navíc `targetRole?`, `jobDescription?` (až pro napojení na scraping) |
 
-### 5.2 `POST /sessions`: jádro integrace
-
-```ts
-// pseudo-kód
-const persona = await db.getPersona(candidateId);
-const profile = await db.getProfile(candidateId);
-
-const res = await fetch(
-  `https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=${process.env.ELEVENLABS_AGENT_ID}`,
-  { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY! } }
-);
-const { signed_url } = await res.json();
-
-return {
-  sessionId,
-  signedUrl: signed_url,
-  dynamicVariables: {
-    candidate_name: persona.displayName,
-    target_role: profile.targetRole ?? "the open position",
-    persona_block: renderPersonaBlock(profile, persona),   // celý popis persony jako text
-    difficulty: persona.difficulty,
-  },
-  overrides: { tts: { voiceId: persona.voice.voiceId } },
-};
-```
-
-### 5.3 `POST /sessions/:id/finish`
-
-1. `GET https://api.elevenlabs.io/v1/convai/conversations/{conversationId}` (header `xi-api-key`) → `transcript[]` (role `user` = HR, `agent` = kandidát). Přepis bývá dostupný až chvíli po skončení hovoru, proto při prázdné odpovědi nebo stavu `processing` zkusit znovu po 1–2 s, maximálně ~10×.
-2. Namapovat roli `user` na `interviewer` a `agent` na `candidate`, deterministicky spočítat `talkRatio`.
-3. Zavolat OpenAI s promptem z kapitoly 7.3 (structured output podle `CandidateFeedback` zod schématu).
-4. Uložit a nastavit `status = feedback_ready`.
-
-> Alternativa k pollování: **post-call webhook** v ElevenLabs. Na hackathon je ale jednodušší, když frontend po `onDisconnect` zavolá `/finish`, protože odpadá veřejná URL a ngrok.
-
-### 5.4 Env proměnné
+### 4.2 Životní cyklus feedbacku (idempotentní)
 
 ```
-OPENAI_API_KEY=
-ELEVENLABS_API_KEY=
-ELEVENLABS_AGENT_ID=
-APIFY_TOKEN=            # pokud backend volá Apify
+interviews.status = done  &&  feedback_status = none
+  → claim: update set feedback_status='generating' where id=? and feedback_status='none'
+  → vítěz claimu: openai.responses.create({ background: true, text: zodTextFormat(CandidateFeedback) })
+                  → uloží feedback_response_id
+GET /api/interviews/:id  (feedback_status = generating)
+  → responses.retrieve(id) → completed?
+      → parse + validace (citace musí být v přepisu, jinak se položka zahodí)
+      → dopočítat talk_ratio z transcriptu
+      → feedback_status='ready'  |  'failed' + feedback_error
 ```
+
+Vstup do OpenAI tvoří `profile` (včetně `candidate.hidden_facts`), `transcript` (role `user` = HR, `agent` = kandidát), `feelings` a `difficulty`.
 
 ---
 
-## 6. ElevenLabs agent: konfigurace
+## 5. ElevenLabs agent: úpravy
 
-Vytvoří se **jednou** skriptem `scripts/create-agent.ts` (`POST /v1/convai/agents/create`) nebo ručně v dashboardu. ID agenta pak patří do `.env`.
+Agent už existuje pro každou personu a `ensureAgent` ho vytvoří nebo aktualizuje. Měním jen jeho konfiguraci a prompt.
 
 | Nastavení | Hodnota | Proč |
 |---|---|---|
-| Language | `en` | pohovor v angličtině |
-| First message | *prázdné* | začíná HR, agent čeká |
-| LLM | OpenAI model ze seznamu (nebo Custom LLM → OpenAI) | požadavek stacku |
-| Temperature | ~0.7–0.8 | přirozenější, méně robotické odpovědi |
-| TTS model | low-latency / conversational model | latence je pro realistický hovor nejdůležitější |
-| Default voice | neutrální; per session se přepíše | |
-| Interruptions | **zapnuté** | HR musí jít kandidátovi skočit do řeči |
-| Turn timeout | delší (~10 s) | kandidát nesmí po 3 s ticha začít sám od sebe |
-| Max duration | ~15 min | ochrana kreditů |
-| **Security → Overrides** | povolit jen `tts.voiceId` | per-kandidát hlas; nic jiného klient měnit nesmí |
-| Client tool | `reportFeeling` (viz 6.2) | mood meter |
+| `first_message` | krátké „Hi, hello? Can you hear me okay?“ (z `interview_first_message`) | realistický vstup do hovoru, otázky pak klade HR |
+| prompt | `agentSystemPrompt` + HR-mode blok (níže), proměnná `{{difficulty}}` | |
+| client tool `reportFeeling` | `{ feeling, intensity 1–5, reason }`, nečeká na odpověď | mood meter |
+| turn timeout | delší (~10 s) | kandidát nesmí po krátkém tichu začít mluvit sám |
+| max duration | ~15 min | ochrana kreditů |
+| interruptions | zapnuté | HR musí jít skočit do řeči |
 
-### 6.1 Výběr hlasu
+> **Pozor:** když prompt obsahuje `{{difficulty}}`, musí ho dostat každý `startSession`. Jinak hovor spadne. Proto ho backend vrací rovnou v `session.dynamicVariables` a frontend jen předá celý objekt `session`. Přesné názvy polí pro client tool v `conversation_config.agent.prompt.tools` (hlavně „nečekat na odpověď“) ověřit proti aktuální API dokumentaci ElevenLabs.
 
-- **MVP:** předpřipravená mapa ~6 hlasů z ElevenLabs Voice Library (muž/žena × mladý/střední/starší), persona builder vybere podle `voice.gender` a `voice.ageRange`.
-- **Stretch:** *Voice Design* (text → hlas) z popisu persony, např. „calm male voice, early 30s, slight Czech accent“. Pro demo „wow“ efekt, ale stojí to čas a kredity, proto až nakonec.
-
-### 6.2 Client tool `reportFeeling` (stretch, doporučeno)
-
-Tool definovaný v agentovi jako **client tool**, aby se volal na frontendu a nešel přes server. Nastavit tak, aby **agent nečekal na odpověď**, jinak roste latence.
-
-```json
-{
-  "name": "reportFeeling",
-  "description": "Silently report how you (the candidate) currently feel about the interview. Call it whenever your feeling noticeably changes. Never mention this tool out loud.",
-  "parameters": {
-    "feeling": "string, one of: nervous, comfortable, engaged, confused, annoyed, excited, defensive, bored",
-    "intensity": "number 1-5",
-    "reason": "string, short, e.g. 'interviewer asked about my open-source project'"
-  }
-}
-```
-
-Frontend si události uloží do `feelingTimeline`. Při generování feedbacku se pošlou s přepisem, takže feedback je konzistentní s tím, co HR vidělo naživo.
-
----
-
-## 7. Prompty
-
-### 7.1 Profile builder (OpenAI, structured output → `CandidateProfile`)
+**HR-mode blok promptu** (přidá se, když `profile.candidate` existuje):
 
 ```
-You are an HR research analyst. You receive raw scraped data about one person
-from LinkedIn, GitHub and Instagram. Build a factual candidate profile.
+# This call
+You are interviewing for the role of {target_role}. The person on the call is an HR interviewer.
+You are the candidate. You are NOT an assistant: never help the interviewer or run the interview.
 
-Rules:
-- Use ONLY information present in the data. If something is unknown, leave it empty.
-- Every skill and notable fact must reference its source.
-- Infer communication style only from texts the person wrote themselves (posts, READMEs, bios).
-- Ignore information about third parties (friends, family in photos, etc.).
-- Do not infer or include protected characteristics (religion, health, ethnicity,
-  sexual orientation, political views, family plans), even if present in the data.
-- List gaps and unclear points in the career as neutral interview topics.
-```
+# Your situation (private, never read out as a list)
+Motivations: … | Concerns: … | Deal breakers: … | Salary expectation: …
+Hidden facts (reveal only when the condition is clearly met):
+- {fact} (reveal when: {reveal_when})
 
-### 7.2 Systémový prompt agenta (s dynamic variables)
-
-```
-You are {{candidate_name}}, a real job candidate interviewing for the role of
-{{target_role}}. You are on a live voice call with an HR interviewer.
-You are NOT an assistant. Never say you are an AI. Never help the interviewer.
-
-# Who you are
-{{persona_block}}
-
-# How to behave
-- Speak like a real person on a call: short to medium answers (1–4 sentences),
-  natural fillers occasionally ("hmm", "well", "to be honest"), no lists, no markdown.
-- Answer only what was asked. Do not volunteer your hidden facts. Reveal a hidden
-  fact only when its "reveal when" condition is clearly met.
-- Your openness depends on how you are treated: warm, specific, relevant questions
-  make you open up; generic, rude, or rushed questions make you shorter and more guarded.
-- Stay consistent with your profile. If asked about something not in it, give a
-  plausible, modest answer and stay consistent with it for the rest of the call.
-- You may ask the interviewer your own questions (about the team, remote policy,
-  salary range, growth), especially near the end, or if your concerns are not addressed.
-- If the interviewer asks an inappropriate question (age, family plans, religion,
-  health, nationality…), react like a real person would: hesitate, deflect politely,
-  and remember it.
-- Difficulty level: {{difficulty}}.
-  friendly = cooperative and open; realistic = normal candidate with some hesitations;
+# Behaviour
+- Short to medium spoken answers (1–4 sentences), occasional natural fillers, no lists.
+- Answer what was asked; don't volunteer hidden facts.
+- Open up when questions are warm, specific and relevant to your real experience;
+  get shorter and more guarded when they are generic, rude or rushed.
+- Near the end, or if your concerns are ignored, ask your own questions: {questions_for_interviewer}.
+- If asked something inappropriate (age, family plans, religion, health, nationality…),
+  hesitate and politely deflect, like a real person would.
+- Difficulty: {{difficulty}}. friendly = cooperative; realistic = normal hesitations;
   tough = skeptical, has other offers, pushes back on vague answers.
-- When your feeling about the interview changes, silently call the reportFeeling tool.
-- Wait for the interviewer to start the conversation.
+- When your feeling about the interview changes, silently call reportFeeling. Never mention it.
 ```
 
-`renderPersonaBlock()` vyrenderuje profil a personu jako čitelný text (kariéra, projekty, zájmy, motivace, obavy, `hiddenFacts` s `revealWhen`, mluvní styl). **Pozor na délku:** delší prompt zvyšuje latenci, proto cílit na ~600–900 slov.
-
-### 7.3 Feedback generator (OpenAI, structured output → `CandidateFeedback`)
-
-```
-You are {{candidate_name}}. You just finished a job interview. Below is your
-persona (including your private motivations, concerns and hidden facts),
-the full transcript, and a timeline of how you felt during the call.
-
-Write honest feedback for the interviewer about how YOU felt as the candidate.
-- Write in first person, like a real candidate giving a candid debrief.
-- Ground every highlight/lowlight in an exact quote from the transcript.
-- Be specific and fair: praise what worked, call out what did not.
-- List hidden facts the interviewer never uncovered.
-- Flag any questions that could be discriminatory or legally risky.
-- Tips must be concrete and actionable ("Ask about my Rust CLI project before
-  asking about salary"), not generic.
-Return JSON matching the schema.
-```
-
-`talkRatio` a citace se po vygenerování **ověří proti přepisu**: citace, která v přepisu není, se zahodí. Chrání to proti halucinacím.
+Stávající pravidla zůstávají: agent na upřímný dotaz přizná, že je AI simulace, a nevymýšlí soukromá fakta.
 
 ---
 
-## 8. Frontend (Next.js, App Router)
+## 6. Práce bez scrapovaných dat (fixtures a seed)
 
-### 8.1 Stránky
+Dokud persona pipeline nevrací kandidáty, vytvářím je ručně:
+
+- `fixtures/candidates/<slug>.json` obsahuje `{ subjectName, targetRole, jobDescription, profile: PersonaProfile }`, kde `profile.candidate` je vyplněné. Připravím 2–3 **fiktivní** kandidáty s různými typy (sebevědomý senior, nervózní junior, kandidát s mezerou v CV). Hodí se zároveň jako „hero“ data pro demo.
+- `scripts/seed-candidates.ts` (`npm run seed:candidates -- --user <email>`) dohledá uživatele v Supabase a pro každou fixture vloží:
+  - `research_jobs` (`status: 'ready'`, `target_role`, `job_description`)
+  - `personas` (`status: 'ready'`, `model: 'fixture'`, `profile`)
+
+  Bez `connector_runs` a `scraped_items`. Schéma to dovoluje a zbytek API (`GET /api/personas/:id`, interviews, chat) pak funguje stejně jako u reálné persony.
+- Seed se validuje přes `PersonaProfile.parse()`, takže fixtures se nerozjedou se schématem.
+- `DELETE /api/research/:id` smaže seed i s agentem, takže úklid funguje bez další práce.
+
+**Napojení na reálná data (pozdější krok):** do `CreateJob` přidat `targetRole` a `jobDescription`, poslat je v digestu do OpenAI a rozšířit `SYSTEM_PROMPT` o instrukce pro `candidate` vrstvu (fakta jen z dat, doplněné věci zapsat do `invented`). Od toho okamžiku vytváří kandidáty scraping a fixtures zůstanou jen pro demo a testy.
+
+---
+
+## 7. Frontend (samostatná Next.js app)
 
 | Route | Obsah |
 |---|---|
-| `/candidates/[id]` | Profilová karta: headline, zkušenosti, projekty, skills se zdroji, „gaps & questions“. Výběr obtížnosti + tlačítko **Start practice interview** |
-| `/interview/[sessionId]` | Hovor: avatar kandidáta + animace, kdo mluví, živý přepis, mood meter, tlačítko **End interview**, časomíra |
-| `/sessions/[id]/feedback` | Výsledky: overall feeling (citát nahoře), skóre (radar nebo bary), timeline pocitů nad přepisem, highlights/lowlights s citacemi, ⚠️ inappropriate questions, „What you didn't find out“, tipy, Glassdoor-style review, ▶️ přehrát feedback hlasem kandidáta |
-
-### 8.2 Hovor: `@elevenlabs/react`
+| `/candidates/[personaId]` | profil (`GET /api/personas/:id`): summary, zkušenosti, projekty, styl komunikace. Výběr obtížnosti a hlasu, tlačítko **Start practice interview** |
+| `/interview/[interviewId]` | hovor: avatar s animací, kdo mluví, živý přepis, mood meter, časomíra, **End interview** |
+| `/interviews/[id]/feedback` | `overall_feeling` jako citát nahoře, skóre, timeline pocitů nad přepisem, highlights/lowlights s citacemi, ⚠️ nevhodné otázky, „What you didn't find out“, tipy, Glassdoor-style review, ▶️ přehrát feedback hlasem kandidáta (`POST /api/voice/tts` s `persona.voice_id`) |
 
 ```tsx
-"use client";
-import { useConversation } from "@elevenlabs/react";
-
+// uvnitř <ConversationProvider> (@elevenlabs/react v1)
 const conversation = useConversation({
-  onMessage: ({ message, source }) => appendTranscript(source, message), // source: "user" | "ai"
-  onDisconnect: () => finishSession(),
-  onError: (e) => setError(String(e)),
+  onMessage: ({ message, source }) => appendTranscript(source, message),
+  onDisconnect: () => router.push(`/interviews/${interview.id}/feedback`),
   clientTools: {
-    reportFeeling: async ({ feeling, intensity, reason }) => {
-      pushFeeling({ t: elapsed(), feeling, intensity, reason });
+    reportFeeling: async (e: { feeling: string; intensity: number; reason: string }) => {
+      queueFeeling({ t: elapsedSecs(), ...e }); // flush na POST /api/interviews/:id/feelings
       return "ok";
     },
   },
 });
 
-async function start() {
-  await navigator.mediaDevices.getUserMedia({ audio: true });
-  const s = await api.post("/sessions", { candidateId, difficulty });
-  const conversationId = await conversation.startSession({
-    signedUrl: s.signedUrl,
-    dynamicVariables: s.dynamicVariables,
-    overrides: s.overrides,
-  });
-  setConversationId(conversationId);
-}
+const { interview, session } = await api.post(`/api/personas/${personaId}/interviews`, { difficulty });
+await conversation.startSession(session); // { conversationToken, dynamicVariables }
 ```
 
-- `conversation.status` a `conversation.isSpeaking` slouží pro UI (pulzující avatar, když kandidát mluví).
-- `conversationId` z `startSession` se pošle do `/sessions/:id/finish`.
-- `conversation.endSession()` na tlačítko End.
+Feedback stránka polluje `GET /api/interviews/:id` každé ~3 s, dokud `feedback_status` není `ready` nebo `failed`. Polling zároveň posouvá generování.
 
-> Tvary přesných callback payloadů (`onMessage`) a options si ověřit proti aktuální verzi SDK při `npm i`. API se mezi verzemi měnilo, vzory výše odpovídají současné dokumentaci.
+> Přesný tvar `onMessage` payloadu a options ověřit proti nainstalované verzi `@elevenlabs/react`.
 
 ---
 
-## 9. Implementační plán (pořadí pro hackathon)
+## 8. Implementační plán
+
+Všechny kroky 1–7 jdou udělat **bez scrapingu**. Na data stack se čeká až v kroku 8.
 
 | # | Krok | Výstup | Odhad |
 |---|---|---|---|
-| 0 | Odsouhlasit datový kontrakt se scraper týmem, získat ukázková JSON data | `fixtures/*.json` | 30 min |
-| 1 | Založit agenta v ElevenLabs (dashboard), nastavit prompt s `{{…}}`, povolit voice override, otestovat v dashboardu s ručně napsanou personou | agent ID, ověřená kvalita hlasu a latence | 1 h |
-| 2 | Backend skeleton: `/sessions` se signed URL + hardcoded persona | funkční end-to-end hovor | 1 h |
-| 3 | Next.js stránka `/interview/[id]` s `useConversation`, živým přepisem a End | **první demovatelný milník** | 1–1.5 h |
-| 4 | `/sessions/:id/finish` → stažení přepisu → feedback přes OpenAI → stránka feedbacku | **druhý milník: celý loop** | 1.5 h |
-| 5 | Profile builder + persona builder z fixtures → `/candidates/[id]` | napojení na scraping | 1.5 h |
-| 6 | Napojení na reálný výstup scraperu | celý produkt | 0.5–1 h |
-| 7 | Stretch: `reportFeeling` + mood meter + timeline ve feedbacku | wow efekt | 1 h |
-| 8 | Stretch: feedback namluvený hlasem kandidáta (TTS), Voice Design | wow efekt | 1 h |
-| 9 | Demo příprava: 1–2 „hero“ kandidáti s předgenerovaným profilem (cache), nacvičený scénář | spolehlivé demo | 1 h |
+| 1 | Domluvit s autorem `persona.ts` umístění kandidátské vrstvy (`PersonaProfile.candidate` vs. sloupec) | rozhodnutí | 15 min |
+| 2 | Rozšířit `PersonaProfile` o `candidate` (nullable), napsat 2–3 fixtures a seed skript | kandidáti v DB bez scrapingu | 1.5 h |
+| 3 | HR-mode prompt v `agentSystemPrompt`, `difficulty` (migrace, schéma, `dynamicVariables`), úprava `agentConfig` | **hovor s kandidátem funguje** (otestovat přes `/docs` a ElevenLabs dashboard) | 1–1.5 h |
+| 4 | Frontend `/candidates/[id]` + `/interview/[id]` s živým přepisem | **první demovatelný milník** | 1.5 h |
+| 5 | `feedback.ts` + migrace + napojení na `syncInterview` a webhook + validace citací | feedback v DB | 1.5–2 h |
+| 6 | Frontend `/interviews/[id]/feedback` | **druhý milník: celý loop** | 1–1.5 h |
+| 7 | Stretch: `reportFeeling` + `/feelings` + mood meter + timeline; namluvený feedback přes TTS; `voices.ts` | wow efekt | 1.5 h |
+| 8 | Napojení na scraping: `targetRole` v `CreateJob`, kandidátská vrstva v persona promptu | reální kandidáti | 1 h |
+| 9 | Demo: hero kandidát z fixtures (spolehlivý) + jeden reálný ze scrapingu, nacvičený scénář | demo | 1 h |
 
-**Závislost na scraperu je až v kroku 5–6.** Do té doby jedu nad fixtures, takže týmy na sebe nečekají.
-
-### Struktura repa (návrh)
-
-```
-apps/
-  web/                    # Next.js
-    app/candidates/[id]/page.tsx
-    app/interview/[sessionId]/page.tsx
-    app/sessions/[id]/feedback/page.tsx
-  api/                    # Node backend
-    src/routes/{candidates,sessions}.ts
-    src/services/{profileBuilder,personaBuilder,feedback,elevenlabs}.ts
-    src/schemas/*.ts      # zod: CandidateProfile, CandidatePersona, CandidateFeedback
-    scripts/create-agent.ts
-fixtures/                 # ukázková scraped data
-docs/
-```
+Po každém kroku: `npm run typecheck && npm run lint && npm run build` a aktualizace `api-catalog.ts`.
 
 ---
 
-## 10. Rizika a jak je řešit
+## 9. Rizika
 
 | Riziko | Mitigace |
 |---|---|
-| **Latence hovoru** (nerealistické pauzy) | rychlý OpenAI model v agentovi, kratší persona prompt, low-latency TTS model, WebRTC spojení |
-| **Halucinace v profilu nebo personě** | zdroje u každého faktu, pole `invented`, validace citací ve feedbacku |
-| **Agent „vypadne z role“** a začne pomáhat jako asistent | tvrdé instrukce v promptu, `tough` obtížnost otestovat; případně pár příkladových odpovědí v promptu |
-| Přepis po hovoru ještě není k dispozici | retry s backoffem v `/finish` |
-| Kredity ElevenLabs | max duration hovoru, na vývoj krátké testy |
-| **Právní a etický rozměr** (GDPR, scraping osobních dat, Instagram) | v pitchi zmínit: jen veřejná data, žádné citlivé kategorie (prompt je explicitně vynechává), mazání dat, souhlas kandidáta v reálném nasazení. Feedback zároveň učí HR **neklást** diskriminační otázky, a to je silný argument pro porotu |
-| Demo v hlučném prostředí | sluchátka s mikrofonem, záložní nahrávka demo hovoru |
+| Latence hovoru | rychlý `ELEVENLABS_AGENT_LLM`, turbo TTS, prompt do ~900 slov, WebRTC |
+| Agent vypadne z role kandidáta | tvrdé instrukce v HR bloku, otestovat obtížnost `tough` |
+| Chybějící `{{difficulty}}` shodí hovor | backend ho vrací vždy v `session.dynamicVariables` |
+| Netlify 60 s | feedback přes OpenAI background mode + polling, stejně jako persona |
+| Halucinace ve feedbacku | citace se ověřují proti přepisu, talk ratio počítá server |
+| Konflikt se společným `persona.ts` | krok 1 (domluva); případně samostatný sloupec |
+| Webhook lokálně nedorazí | `GET /api/interviews/:id` posune hovor i feedback sám |
+| GDPR a etika | jen veřejná data, žádné citlivé kategorie, fixtures jsou fiktivní lidé, stock hlasy bez klonování. Feedback zároveň učí HR **neklást** diskriminační otázky (silný argument do pitche) |
 
 ---
 
-## 11. Otevřené otázky
+## 10. Otevřené otázky
 
-1. Kdo volá Apify: scraper modul samostatně, nebo můj backend? Jaký přesný tvar dat dostanu?
-2. Zadává HR k pohovoru i **job description**? Persona by pak reagovala na konkrétní pozici (doporučuji, je to levné a výrazně to zlepší realističnost).
-3. Úložiště: stačí SQLite nebo JSON, nebo tým plánuje sdílenou DB (Supabase apod.)?
-4. Monorepo s `apps/web` + `apps/api`, nebo backend jen jako Next.js API routes? Stack říká Node backend zvlášť, takže počítám se samostatnou službou.
-5. Chceme ukládat audio nahrávku hovoru pro přehrání ve feedbacku? ElevenLabs ji umí vrátit přes Conversations API.
+1. Kandidátská vrstva: rozšířit `PersonaProfile` (společný soubor), nebo samostatný sloupec?
+2. Frontend: kde je repo a kdo dělá které stránky? Počítám s tím, že `/interview` a `/feedback` jsou moje.
+3. Má HR zadávat `jobDescription` už při startu research jobu, nebo až před pohovorem?
+4. Má mít jeden kandidát (persona) víc pohovorů s různou obtížností a mezi nimi srovnání zlepšení? Data na to schéma už má.
