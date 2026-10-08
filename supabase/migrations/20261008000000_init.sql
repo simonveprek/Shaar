@@ -98,7 +98,7 @@ create index interviews_persona_idx on public.interviews (persona_id, created_at
 
 -- updated_at bookkeeping
 create or replace function public.touch_updated_at() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = '' as $$
 begin
   new.updated_at = now();
   return new;
