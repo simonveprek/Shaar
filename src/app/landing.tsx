@@ -60,6 +60,10 @@ const DEMO_CANDIDATES: Candidate[] = [
     title: "u/vell_m (Mara Vell)", snippet: "Posts in r/AnalogCommunity, r/brutalism and r/Prague.", match: 1,
   },
   {
+    id: "website:mara-vell.example", platform: "website", label: "Website", handle: "mara-vell.example", url: "https://mara-vell.example",
+    title: "Mara Vell, photographs of concrete and film", snippet: "Portfolio, prints and contact. Prague.", match: 1,
+  },
+  {
     id: "facebook:maravella.bakes", platform: "facebook", label: "Facebook", handle: "maravella.bakes", url: "https://facebook.com/maravella.bakes",
     title: "Mara Vella Bakes | Sliema, Malta", snippet: "Family bakery in Sliema since 1998. Pastizzi every morning.", match: 0.5,
   },
@@ -955,7 +959,7 @@ function Candidates({
                     transition={{ layout: FLY }}
                     className="max-w-[90%] truncate text-[17px] font-medium tracking-[-0.01em]"
                   >
-                    @{c.handle}
+                    {c.platform === "website" ? c.handle : `@${c.handle}`}
                   </motion.span>
                 </CardStage>
                 {/* The words arrive once the card has opened, so they are never seen stretched. */}

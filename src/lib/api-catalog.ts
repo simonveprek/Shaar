@@ -301,6 +301,17 @@ export const routes: RouteDoc[] = [
     },
   },
   {
+    method: "GET",
+    path: "/api/research/:id/photo",
+    group: "Research",
+    summary: "The person's profile picture",
+    description:
+      "The best public profile picture from the job's profiles (LinkedIn first, then Instagram, X and the rest). Fetched once and kept in `.data/photos`, because platform image links expire and refuse other sites. 404 when no profile has a picture.",
+    auth: "user",
+    params: { id: "Job ID" },
+    response: { status: 200, contentType: "image/*", note: "Use it as an `img` source. The file's `subject.photo` already points here." },
+  },
+  {
     method: "POST",
     path: "/api/research/:id/persona",
     group: "Research",

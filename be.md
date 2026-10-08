@@ -149,6 +149,7 @@ Users only ever see their own rows.
 | `DELETE /api/research/:id` | | 204; deletes all data + the ElevenLabs agent |
 | `GET /api/research/:id/items` | `?platform=&kind=profile\|post\|comment&limit=(≤200)&offset=&raw=1` | `{ items, total, limit, offset }` |
 | `GET /api/research/:id/dossier` | | `{ dossier, jobStatus }`: the watcher's file (presence, routine heatmap in UTC, activity per month, circle, top posts, stated views, exposure 0-100). Exposure only, never a judgement. Rendered by `src/app/dossier/dossier-view.tsx`; `/dossier/sample` shows a fictional subject |
+| `GET /api/research/:id/photo` | | The person's best public profile picture, cached in `.data/photos` |
 | `POST /api/research/:id/persona` | | 202 `{ persona }` (regenerate; 409 while scraping) |
 | `GET /api/personas/:id` | | `{ persona }` (`persona.profile` is a `PersonaProfile`, see `src/lib/persona.ts`) |
 | `POST /api/personas/:id/interviews` | `{ voiceId?, transport?: "webrtc" (default) \| "websocket", difficulty?: "friendly" \| "realistic" (default) \| "tough" }` | 201 `{ interview, agentId, session: { conversationToken } \| { signedUrl } }`, plus `session.dynamicVariables` for candidate personas (409 if persona not ready) |
@@ -162,7 +163,7 @@ Users only ever see their own rows.
 | `POST /api/webhooks/elevenlabs` | ElevenLabs post-call payload, `ElevenLabs-Signature` header | Server-to-server only |
 
 **Platforms** (`platform` values): `instagram`, `tiktok`, `x`, `linkedin`, `youtube`, `facebook`,
-`reddit`, `threads`, `pinterest`. `target` is a handle or a profile URL; each connector normalizes it.
+`reddit`, `threads`, `pinterest`, and `website` (their own site, up to 5 pages read as text). `target` is a handle or a profile URL; each connector normalizes it.
 
 ### Frontend recipes
 
@@ -199,7 +200,8 @@ for (let r; !(r = await reader.read()).done; ) append(decoder.decode(r.value, { 
 Gate opening → name → "What do we do with them" (Gather intelligence, Read them, Interrogate) →
 `POST /api/discover` and polling → "Is this them" (the visitor picks the found accounts) →
 `POST /api/research` with the picks and the purpose as notes → `/dossier/<job id>`, which polls
-`GET /api/research/:id/dossier` and fills in as sources finish. Visitors never sign up: on the first
+`GET /api/research/:id/dossier` and fills in as sources finish. The file shows their photo and website, and once
+the persona is ready an "Interrogate them" button opens `/interview/<persona id>` (Michael's `MeetCall`). Visitors never sign up: on the first
 `POST /api/discover` or `POST /api/research` the server gives them a random id in a signed httpOnly
 `shaar_visitor` cookie (`src/lib/auth.ts`). The browser just calls
 same-origin routes (`src/lib/client.ts`).

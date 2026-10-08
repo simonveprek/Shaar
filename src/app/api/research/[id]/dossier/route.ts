@@ -14,7 +14,7 @@ export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/resea
   const { job, runs } = await advanceJob(id);
 
   const items = await sql<DossierItem>(
-    `select platform, kind, author, text, posted_at, url, metrics from scraped_items
+    `select platform, kind, author, text, posted_at, url, metrics, media, links from scraped_items
      where job_id = $1 order by posted_at desc nulls last limit 3000`,
     [id],
   );
@@ -45,7 +45,17 @@ export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/resea
       found: mine.reduce((sum, r) => sum + r.found, 0),
     };
   });
-  return Response.json({ dossier, jobStatus: job.status, sources });
+  // The photo goes through our own route: platform image links expire and refuse other sites.
+  if (dossier.subject.photo) dossier.subject.photo = `/api/research/${job.id}/photo`;
+  const purpose = /^Purpose: (.+?)\.?$/m.exec(job.notes ?? "")?.[1] ?? null;
+  return Response.json({
+    dossier,
+    jobStatus: job.status,
+    sources,
+    purpose,
+    // Ready personas can be interviewed at /interview/:id.
+    persona: persona ? { id: persona.id, status: persona.status } : null,
+  });
 });
 
 /** Records a run has so far: its dataset while it runs on Apify, what was ingested once it is done. */

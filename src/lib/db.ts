@@ -63,6 +63,11 @@ create table if not exists scraped_items (
 );
 create index if not exists scraped_items_job_idx on scraped_items (job_id, platform, kind, posted_at desc);
 
+-- Pages from a person's own website, and the links they published in their bios.
+alter table scraped_items drop constraint if exists scraped_items_kind_check;
+alter table scraped_items add constraint scraped_items_kind_check check (kind in ('profile', 'post', 'comment', 'page'));
+alter table scraped_items add column if not exists links jsonb not null default '[]'::jsonb;
+
 create table if not exists personas (
   id                    uuid primary key default gen_random_uuid(),
   job_id                uuid not null unique references research_jobs (id) on delete cascade,

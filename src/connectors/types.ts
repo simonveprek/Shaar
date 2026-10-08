@@ -1,4 +1,4 @@
-export type ItemKind = "profile" | "post" | "comment";
+export type ItemKind = "profile" | "post" | "comment" | "page";
 
 /** Platform-independent shape stored in `scraped_items`; the raw Apify item is kept alongside it. */
 export type NormalizedItem = {
@@ -10,6 +10,8 @@ export type NormalizedItem = {
   postedAt: string | null;
   metrics: Record<string, number>;
   media: string[];
+  /** Links the person published, like the website in their bio. Profiles only. */
+  links?: string[];
 };
 
 export type ConnectorOptions = {

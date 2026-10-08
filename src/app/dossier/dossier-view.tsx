@@ -5,7 +5,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useState, type ReactNode } from "react";
 import { List, Row, Stat, Status } from "@/components/bits";
 import { Logo } from "@/components/logo";
-import { Badge, cx, EASE, Item, LineChart, Panel, Reveal } from "@/components/ui";
+import { Badge, Button, cx, EASE, Item, LineChart, Panel, Reveal } from "@/components/ui";
 import type { Dossier } from "@/lib/dossier";
 
 /*
@@ -70,11 +70,14 @@ export function DossierView({
   dossier,
   sample = false,
   status,
+  interview,
 }: {
   dossier: Dossier;
   sample?: boolean;
   /** A line in the header while the file is still being put together. */
   status?: ReactNode;
+  /** The way into a simulated interview with their persona: a link once it is ready, or a note until then. */
+  interview?: { href?: string; note?: string; emphasis?: boolean };
 }) {
   const { totals, exposure } = dossier;
   const posts = useCount(totals.posts);
@@ -99,24 +102,52 @@ export function DossierView({
       </header>
 
       <div className="mx-auto w-full max-w-[1180px] px-5 pt-10 pb-24 sm:px-8 sm:pt-14">
-        <Reveal>
-          <Item>
-            <p className={CAPTION}>{sample ? "Sample file · fictional subject" : `Subject file ${dossier.fileNumber}`}</p>
+        <Reveal className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
+          <Item className="shrink-0">
+            <Portrait name={dossier.subject.name} photo={dossier.subject.photo} />
           </Item>
-          <Item>
-            <h1 className="mt-4 text-title">{dossier.subject.name}</h1>
-          </Item>
-          {dossier.subject.oneLine && (
+          <div className="min-w-0 flex-1">
             <Item>
-              <p className="mt-3 max-w-[62ch] text-body text-muted">{dossier.subject.oneLine}</p>
+              <p className={CAPTION}>{sample ? "Sample file · fictional subject" : `Subject file ${dossier.fileNumber}`}</p>
             </Item>
-          )}
-          <Item>
-            <p className="mt-5 text-label text-muted">
-              Put together from {totals.items} public items across {totals.platforms} platforms. First seen{" "}
-              {month(totals.firstSeen)}, last seen {month(totals.lastSeen)}.
-            </p>
-          </Item>
+            <Item>
+              <h1 className="mt-4 text-title">{dossier.subject.name}</h1>
+            </Item>
+            {dossier.subject.oneLine && (
+              <Item>
+                <p className="mt-3 max-w-[62ch] text-body text-muted">{dossier.subject.oneLine}</p>
+              </Item>
+            )}
+            <Item>
+              <p className="mt-5 text-label text-muted">
+                Put together from {totals.items} public items across {totals.platforms} platforms. First seen{" "}
+                {month(totals.firstSeen)}, last seen {month(totals.lastSeen)}.
+              </p>
+            </Item>
+            {(dossier.subject.website || interview) && (
+              <Item>
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  {interview?.href ? (
+                    <Button href={interview.href} variant={interview.emphasis ? "primary" : "secondary"}>
+                      Interrogate them
+                    </Button>
+                  ) : interview?.note ? (
+                    <span className={cx(CAPTION, "shimmer")}>{interview.note}</span>
+                  ) : null}
+                  {dossier.subject.website && (
+                    <a
+                      href={dossier.subject.website.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-label text-muted underline decoration-underline underline-offset-4 transition-colors duration-150 hover:text-foreground"
+                    >
+                      {dossier.subject.website.host} ↗
+                    </a>
+                  )}
+                </div>
+              </Item>
+            )}
+          </div>
         </Reveal>
 
         <Reveal className="mt-10 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-3 lg:grid-cols-4 lg:gap-4">
@@ -317,6 +348,39 @@ function Routine({ grid }: { grid: number[][] }) {
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Their face, in monochrome like the rest of the file. Without a public photo, their initials in a circle
+ * where the photo would be.
+ */
+function Portrait({ name, photo }: { name: string; photo: string | null }) {
+  const [broken, setBroken] = useState(false);
+  const initials = name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return (
+    <div className="relative size-24 overflow-hidden rounded-full border border-border bg-well sm:size-28">
+      {photo && !broken ? (
+        // A plain img: the source is our own route, and it is one small image.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={photo}
+          alt={`${name}, public profile picture`}
+          onError={() => setBroken(true)}
+          className="size-full object-cover grayscale contrast-[1.05]"
+        />
+      ) : (
+        <span aria-hidden="true" className="grid size-full place-items-center text-heading text-muted">
+          {initials}
+        </span>
+      )}
     </div>
   );
 }

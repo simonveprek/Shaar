@@ -18,6 +18,10 @@ export type DossierItem = {
   posted_at: string | null;
   url: string | null;
   metrics: Record<string, number>;
+  /** Profile pictures for profiles, images for posts. */
+  media?: string[];
+  /** Links the person published in a bio. */
+  links?: string[];
 };
 
 export type DossierInput = {
@@ -32,7 +36,15 @@ export type DossierInput = {
 export type Dossier = {
   fileNumber: string;
   compiledAt: string;
-  subject: { name: string; oneLine: string | null; summary: string | null };
+  subject: {
+    name: string;
+    oneLine: string | null;
+    summary: string | null;
+    /** The best public profile picture's source URL. Pages show it through /api/research/:id/photo. */
+    photo: string | null;
+    /** Their own website, from a confirmed site or a link in one of their bios. */
+    website: { url: string; host: string; title: string | null } | null;
+  };
   totals: {
     items: number;
     posts: number;
@@ -85,8 +97,48 @@ function counted<T>(values: T[]): Map<T, number> {
 const top = <T,>(map: Map<T, number>, n: number) =>
   [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 
+// Where a profile picture is most likely a clear photo of the face, best first.
+const PHOTO_ORDER = ["linkedin", "instagram", "x", "tiktok", "threads", "facebook", "youtube", "pinterest", "reddit"];
+
+/** The profile picture to show for the person, or null. */
+export function photoSource(items: DossierItem[]): string | null {
+  const profiles = items.filter((i) => i.kind === "profile" && i.media?.length);
+  profiles.sort((a, b) => rank(a.platform) - rank(b.platform));
+  return profiles[0]?.media?.[0] ?? null;
+}
+const rank = (platform: string) => (PHOTO_ORDER.indexOf(platform) + 1 || 99);
+
+// Platforms and big sites that are never someone's own website.
+const NOT_A_WEBSITE =
+  /(^|\.)(instagram|tiktok|x|twitter|linkedin|youtube|youtu|facebook|fb|reddit|threads|pinterest|google|apple|wikipedia|t)\.(com|net|org|be|co|me)$/i;
+
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+};
+
+/** Their website: a crawled site first, then a link from a bio, then a URL written in a bio. */
+function findWebsite(items: DossierItem[]): Dossier["subject"]["website"] {
+  const page = items.find((i) => i.kind === "page" && i.url);
+  if (page?.url) {
+    const host = hostOf(page.url);
+    if (host) return { url: new URL(page.url).origin, host, title: page.author };
+  }
+  const profiles = items.filter((i) => i.kind === "profile");
+  const written = profiles.flatMap((p) => [...(p.text ?? "").matchAll(/https?:\/\/[^\s)]+/g)].map((m) => m[0]));
+  for (const link of [...profiles.flatMap((p) => p.links ?? []), ...written]) {
+    const host = hostOf(link);
+    if (host && !NOT_A_WEBSITE.test(host)) return { url: link, host, title: null };
+  }
+  return null;
+}
+
 export function buildDossier({ jobId, subjectName, items, persona, now }: DossierInput): Dossier {
-  const posts = items.filter((i) => i.kind !== "profile");
+  // Pages from their website feed the persona, but they are not posts with a time, likes or a circle.
+  const posts = items.filter((i) => i.kind !== "profile" && i.kind !== "page");
   const profiles = items.filter((i) => i.kind === "profile");
   const dated = posts.filter((p) => p.posted_at).map((p) => ({ ...p, at: new Date(p.posted_at!) }));
   dated.sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -102,10 +154,11 @@ export function buildDossier({ jobId, subjectName, items, persona, now }: Dossie
     .map((platform) => {
       const profile = profiles.find((p) => p.platform === platform);
       const theirs = dated.filter((p) => p.platform === platform);
+      const site = platform === "website" ? items.find((i) => i.platform === platform && i.url)?.url : null;
       return {
         platform,
         label: LABELS.get(platform) ?? platform,
-        handle: profile?.author ?? theirs[0]?.author ?? null,
+        handle: site ? hostOf(site) : (profile?.author ?? theirs[0]?.author ?? null),
         url: profile?.url ?? null,
         followers: profile?.metrics.followers ?? null,
         posts: posts.filter((p) => p.platform === platform).length,
@@ -202,7 +255,13 @@ export function buildDossier({ jobId, subjectName, items, persona, now }: Dossie
   return {
     fileNumber: fileNumber(jobId),
     compiledAt: now.toISOString(),
-    subject: { name: persona?.display_name || subjectName, oneLine: persona?.one_line_summary ?? null, summary: persona?.summary ?? null },
+    subject: {
+      name: persona?.display_name || subjectName,
+      oneLine: persona?.one_line_summary ?? null,
+      summary: persona?.summary ?? null,
+      photo: photoSource(items),
+      website: findWebsite(items),
+    },
     totals: { items: items.length, posts: posts.length, platforms: platforms.length, reach, firstSeen, lastSeen, yearsVisible },
     presence,
     routine: { grid, peak, busiestHours },

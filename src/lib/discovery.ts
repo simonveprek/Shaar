@@ -7,9 +7,11 @@ import { HttpError, notFound } from "./http";
 
 /*
  * From a name to profiles. One Google search per platform for the name in
- * quotes, run as a single Apify actor run. Results that are real profile links
- * become candidates, ranked by how well their title matches the name. Nothing
- * is scraped until the visitor confirms which candidates are the person.
+ * quotes, plus one open search for their own website, run as a single Apify
+ * actor run. Results that are real profile links become candidates, ranked by
+ * how well their title matches the name. A site whose domain carries the name
+ * becomes a website candidate. Nothing is scraped until the visitor confirms
+ * which candidates are the person.
  */
 
 const ACTOR = "apify/google-search-scraper";
@@ -41,6 +43,29 @@ export type DiscoveryRow = {
 };
 
 const LABELS = new Map(listConnectors().map((c) => [c.platform, c.label]));
+
+// Sites that are never a person's own website, even when their name is on them.
+const NOT_OWN_SITE =
+  /(^|\.)(instagram|tiktok|x|twitter|linkedin|youtube|facebook|reddit|threads|pinterest|wikipedia|wikidata|google|imdb|crunchbase|github|medium|amazon|apple|spotify|bloomberg|forbes|nytimes|bbc|cnn|theguardian|zoominfo|rocketreach|signalhire|peoplefinders|whitepages|spokeo)\.[a-z.]+$/i;
+
+/** A site that is probably the person's own: its domain spells their name, like janedoe.com or jane-doe.design. */
+export function ownSite(name: string, url: string): { host: string; origin: string } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.replace(/^www\./, "");
+  if (NOT_OWN_SITE.test(host)) return null;
+  const label = words(host.split(".").slice(0, -1).join(" ")).join("");
+  const parts = words(name).filter((w) => w.length > 1);
+  if (!parts.length) return null;
+  // Every part of the name, or at least the surname and the first initial, must be in the domain.
+  const surname = parts[parts.length - 1];
+  const spells = parts.every((w) => label.includes(w)) || (label.includes(surname) && label.startsWith(parts[0][0]));
+  return spells ? { host, origin: parsed.origin } : null;
+}
 const PER_PLATFORM = 2;
 
 const words = (s: string) =>
@@ -77,7 +102,9 @@ export async function startDiscovery(userId: string, name: string, purpose: stri
  */
 async function launchSearch(row: DiscoveryRow): Promise<DiscoveryRow> {
   try {
-    const queries = PROFILE_SITES.map((s) => `"${row.name.replace(/"/g, "")}" site:${s.site}`).join("\n");
+    const name = row.name.replace(/"/g, "");
+    // One search per platform, and one open search where their own website would show up.
+    const queries = [...PROFILE_SITES.map((s) => `"${name}" site:${s.site}`), `"${name}"`].join("\n");
     const run = await apify()
       .actor(ACTOR)
       .start(
@@ -127,6 +154,20 @@ export async function syncDiscovery(row: DiscoveryRow): Promise<DiscoveryRow> {
     const site = PROFILE_SITES.find((s) => term.includes(`site:${s.site}`));
     if (site) scanned[site.platform] = (scanned[site.platform] ?? 0) + (page.organicResults?.length ?? 0);
     for (const result of page.organicResults ?? []) {
+      const site = !result.url || parseProfileUrl(result.url) ? null : ownSite(row.name, result.url);
+      if (site && !seen.has(`website:${site.host}`)) {
+        seen.add(`website:${site.host}`);
+        candidates.push({
+          id: `website:${site.host}`,
+          platform: "website",
+          label: "Website",
+          handle: site.host,
+          url: site.origin,
+          title: (result.title ?? "").trim(),
+          snippet: (result.description ?? "").trim().slice(0, 220),
+          match: 1,
+        });
+      }
       const ref = result.url ? parseProfileUrl(result.url) : null;
       if (!ref) continue;
       const id = `${ref.platform}:${ref.handle.toLowerCase()}`;

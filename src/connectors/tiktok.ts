@@ -1,5 +1,5 @@
 import type { Connector, NormalizedItem } from "./types";
-import { date, handleFrom, item, mediaUrls, metrics, profileId, str } from "./util";
+import { date, handleFrom, item, linksFrom, mediaUrls, metrics, profileId, str } from "./util";
 
 export const tiktok: Connector = {
   platform: "tiktok",
@@ -37,6 +37,7 @@ export const tiktok: Connector = {
                 posts: ["authorMeta.video"],
               }),
               media: mediaUrls(raw, "authorMeta.avatar"),
+              links: linksFrom(raw, "authorMeta.bioLink"),
             }),
           );
         }

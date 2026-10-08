@@ -1,5 +1,5 @@
 import type { Connector } from "./types";
-import { date, isUrl, item, joinText, mediaUrls, metrics, profileId, str, cleanHandle } from "./util";
+import { date, isUrl, item, joinText, linksFrom, mediaUrls, metrics, profileId, str, cleanHandle } from "./util";
 
 const pageUrl = (target: string) =>
   isUrl(target) ? target.trim() : `https://www.facebook.com/${cleanHandle(target)}/`;
@@ -29,6 +29,7 @@ export const facebook: Connector = {
             text: joinText(str(raw, "intro"), info, categories),
             metrics: metrics(raw, { likes: ["likes"], followers: ["followers"] }),
             media: mediaUrls(raw, "profilePictureUrl"),
+            links: linksFrom(raw, "website", "websites"),
           }),
         ];
       },

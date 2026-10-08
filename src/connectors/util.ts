@@ -102,8 +102,23 @@ export function toUrl(target: string, base: string): string {
 
 /** Builds a NormalizedItem, filling defaults. */
 export function item(fields: Partial<NormalizedItem> & Pick<NormalizedItem, "kind" | "externalId">): NormalizedItem {
-  return { url: null, author: null, text: null, postedAt: null, metrics: {}, media: [], ...fields };
+  return { url: null, author: null, text: null, postedAt: null, metrics: {}, media: [], links: [], ...fields };
 }
 
 /** Joins non-empty text parts (e.g. title + description). */
 export const joinText = (...parts: (string | null)[]) => parts.filter(Boolean).join("\n\n") || null;
+
+/** Web links from the given paths: strings, or objects with a url/link field (like TikTok's bioLink). */
+export function linksFrom(raw: unknown, ...paths: string[]): string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    const v = get(raw, p);
+    for (const entry of Array.isArray(v) ? v : [v]) {
+      const link = typeof entry === "string" ? entry : str(entry, "url", "link", "href");
+      if (!link) continue;
+      const full = /^https?:\/\//i.test(link) ? link : /^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(link) ? `https://${link}` : null;
+      if (full) out.push(full);
+    }
+  }
+  return [...new Set(out)];
+}

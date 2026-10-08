@@ -1,5 +1,5 @@
 import type { Connector } from "./types";
-import { date, handleFrom, item, mediaUrls, metrics, profileId, str } from "./util";
+import { date, handleFrom, item, linksFrom, mediaUrls, metrics, profileId, str } from "./util";
 
 const profileUrl = (target: string) => `https://www.instagram.com/${handleFrom(target)}/`;
 
@@ -30,6 +30,7 @@ export const instagram: Connector = {
               posts: ["postsCount"],
             }),
             media: mediaUrls(raw, "profilePicUrlHD", "profilePicUrl"),
+            links: linksFrom(raw, "externalUrl", "externalUrls"),
           }),
         ];
       },

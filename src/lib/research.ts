@@ -225,16 +225,17 @@ async function ingestDataset(run: RunRow, datasetId: string): Promise<number> {
           posted_at: item.postedAt,
           metrics: item.metrics,
           media: item.media,
+          links: item.links ?? [],
           data: leanRaw(raw as Record<string, unknown>),
         })),
     );
     if (rows.length) {
       await sql(
-        `insert into scraped_items (job_id, run_id, user_id, platform, kind, external_id, url, author, text, posted_at, metrics, media, data)
-         select job_id, run_id, user_id, platform, kind, external_id, url, author, text, posted_at, metrics, media, data
+        `insert into scraped_items (job_id, run_id, user_id, platform, kind, external_id, url, author, text, posted_at, metrics, media, links, data)
+         select job_id, run_id, user_id, platform, kind, external_id, url, author, text, posted_at, metrics, media, links, data
          from jsonb_to_recordset($1::jsonb) as r(
            job_id uuid, run_id uuid, user_id text, platform text, kind text, external_id text, url text,
-           author text, text text, posted_at timestamptz, metrics jsonb, media jsonb, data jsonb)
+           author text, text text, posted_at timestamptz, metrics jsonb, media jsonb, links jsonb, data jsonb)
          on conflict (run_id, external_id) do nothing`,
         [json(rows)],
       );

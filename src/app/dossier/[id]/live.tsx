@@ -16,7 +16,13 @@ import { Collecting, type Source } from "./collecting";
  * written.
  */
 
-type Payload = { dossier: Dossier; jobStatus: "scraping" | "analyzing" | "ready" | "failed"; sources: Source[] };
+type Payload = {
+  dossier: Dossier;
+  jobStatus: "scraping" | "analyzing" | "ready" | "failed";
+  sources: Source[];
+  purpose: string | null;
+  persona: { id: string; status: "generating" | "ready" | "failed" } | null;
+};
 
 const POLL_MS = 4000;
 
@@ -81,6 +87,13 @@ export function LiveDossier() {
           <DossierView
             dossier={data.dossier}
             status={data.jobStatus === "scraping" ? "Still collecting" : data.jobStatus === "analyzing" ? "Reading them" : undefined}
+            interview={
+              data.persona?.status === "ready"
+                ? { href: `/interview/${data.persona.id}`, emphasis: data.purpose === "Interrogate" }
+                : data.jobStatus === "scraping" || data.jobStatus === "analyzing"
+                  ? { note: "Interrogation opens once they have been read" }
+                  : undefined
+            }
           />
         </motion.div>
       ) : (
