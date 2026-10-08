@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
-import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { RunConnector } from "@/lib/schemas";
 import { handle, must, readJson } from "@/lib/http";
 import { getConnector, describeConnector } from "@/connectors";
 import { createJob, getJob, startConnector, type JobRow } from "@/lib/research";
@@ -10,14 +10,6 @@ import { db } from "@/lib/supabase";
 export const GET = handle(async (_req: NextRequest, ctx: RouteContext<"/api/connectors/[platform]">) => {
   const { platform } = await ctx.params;
   return Response.json({ connector: describeConnector(getConnector(platform)) });
-});
-
-const RunConnector = z.object({
-  target: z.string().trim().min(1).max(500),
-  maxPosts: z.number().int().min(1).max(500).optional(),
-  /** Add this run to an existing job; otherwise a new job is created for `subjectName`. */
-  jobId: z.uuid().optional(),
-  subjectName: z.string().trim().min(1).max(200).optional(),
 });
 
 /**

@@ -1,0 +1,407 @@
+import { z } from "zod";
+import { Chat, CreateJob, RunConnector, StartInterview, Tts } from "./schemas";
+
+/*
+ * Every public route, in one place. Powers GET /api (JSON index) and /docs (how-to page).
+ * When you add or change a route, update its entry here. Request bodies come from the same zod
+ * schemas the routes validate with, so field docs can't drift.
+ */
+
+export type Auth = "user" | "none" | "webhook";
+
+export type RouteDoc = {
+  method: "GET" | "POST" | "DELETE";
+  path: string;
+  group: string;
+  summary: string;
+  description?: string;
+  auth: Auth;
+  params?: Record<string, string>;
+  query?: Record<string, string>;
+  body?: z.ZodType;
+  bodyExample?: unknown;
+  response: { status: number; contentType?: string; example?: unknown; note?: string };
+};
+
+const job = {
+  id: "8f0c…",
+  user_id: "1b2d…",
+  subject_name: "Jane Doe",
+  notes: null,
+  status: "scraping",
+  error: null,
+  created_at: "2026-10-08T18:00:00Z",
+  updated_at: "2026-10-08T18:00:00Z",
+};
+
+const run = {
+  id: "c41e…",
+  job_id: "8f0c…",
+  platform: "instagram",
+  target: "@janedoe",
+  actor_id: "apify/instagram-scraper",
+  apify_run_id: "HG7…",
+  status: "running",
+  item_count: 0,
+  error: null,
+};
+
+const persona = {
+  id: "5a9b…",
+  job_id: "8f0c…",
+  status: "ready",
+  model: "gpt-6.1-sol",
+  profile: {
+    display_name: "Jane Doe",
+    one_line_summary: "Brooklyn-based climbing photographer who posts dry, self-deprecating captions.",
+    summary: "…",
+    communication_style: { tone: "dry, warm", typical_phrases: ["no notes", "send it"], "…": "…" },
+    suggested_interview_questions: ["How did you get into climbing photography?"],
+    "…": "see PersonaProfile in src/lib/persona.ts",
+  },
+  voice_id: null,
+  elevenlabs_agent_id: null,
+};
+
+export const routes: RouteDoc[] = [
+  // ── Basics
+  {
+    method: "GET",
+    path: "/api",
+    group: "Basics",
+    summary: "This index of every route",
+    auth: "none",
+    response: { status: 200, example: { name: "Projstalker API", docs: "/docs", routes: ["…"] } },
+  },
+  {
+    method: "GET",
+    path: "/api/health",
+    group: "Basics",
+    summary: "Health check",
+    auth: "none",
+    response: { status: 200, example: { ok: true, time: "2026-10-08T18:00:00.000Z" } },
+  },
+
+  // ── Connectors
+  {
+    method: "GET",
+    path: "/api/connectors",
+    group: "Connectors",
+    summary: "List supported platforms",
+    description: "Use this to build the \"add a source\" form: `targetHint` is the input placeholder, `notes` are caveats to show.",
+    auth: "none",
+    response: {
+      status: 200,
+      example: {
+        connectors: [
+          {
+            platform: "instagram",
+            label: "Instagram",
+            targetHint: "Instagram username or profile URL",
+            notes: "Private accounts only return basic profile info.",
+            actors: [
+              { actorId: "apify/instagram-profile-scraper", role: "profile" },
+              { actorId: "apify/instagram-scraper", role: "posts" },
+            ],
+          },
+        ],
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/connectors/:platform",
+    group: "Connectors",
+    summary: "One platform's details",
+    auth: "none",
+    params: { platform: "instagram, tiktok, x, linkedin, youtube, facebook, reddit, threads or pinterest" },
+    response: { status: 200, example: { connector: { platform: "tiktok", label: "TikTok", "…": "…" } } },
+  },
+  {
+    method: "POST",
+    path: "/api/connectors/:platform",
+    group: "Connectors",
+    summary: "Scrape one platform profile",
+    description:
+      "Without `jobId` this starts a new research job for one profile. With `jobId` it adds the profile to an existing job; the job goes back to `scraping` and the persona is rebuilt when it finishes.",
+    auth: "user",
+    params: { platform: "Platform key" },
+    body: RunConnector,
+    bodyExample: { target: "@janedoe", maxPosts: 30, jobId: "8f0c…" },
+    response: { status: 201, example: { job, runs: [run] } },
+  },
+
+  // ── Research
+  {
+    method: "POST",
+    path: "/api/research",
+    group: "Research",
+    summary: "Start a research job",
+    description:
+      "Starts one Apify run per actor for each target (some platforms use a profile actor and a posts actor). Scraping takes a few minutes; then poll `GET /api/research/:id` until `job.status` is `ready` or `failed`.",
+    auth: "user",
+    body: CreateJob,
+    bodyExample: {
+      subjectName: "Jane Doe",
+      notes: "Photographer, based in NYC",
+      targets: [
+        { platform: "instagram", target: "@janedoe" },
+        { platform: "tiktok", target: "https://www.tiktok.com/@janedoe", maxPosts: 50 },
+      ],
+    },
+    response: { status: 201, example: { job, runs: [run] } },
+  },
+  {
+    method: "GET",
+    path: "/api/research",
+    group: "Research",
+    summary: "List my research jobs",
+    auth: "user",
+    query: { limit: "Max jobs to return (default 50, max 100)" },
+    response: {
+      status: 200,
+      example: { jobs: [{ ...job, status: "ready", personas: [{ id: "5a9b…", status: "ready", display_name: "Jane Doe", one_line_summary: "…" }] }] },
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/research/:id",
+    group: "Research",
+    summary: "Job progress, runs and persona",
+    description:
+      "The main polling endpoint (every ~5 s). Each call also moves the job forward: it pulls in finished Apify runs and checks persona generation. `job.status`: scraping → analyzing → ready | failed.",
+    auth: "user",
+    params: { id: "Job ID" },
+    response: {
+      status: 200,
+      example: {
+        job: { ...job, status: "analyzing" },
+        runs: [{ ...run, status: "succeeded", item_count: 31 }],
+        persona: { ...persona, status: "generating", profile: null },
+        itemCounts: { instagram: { profile: 1, post: 30 } },
+      },
+    },
+  },
+  {
+    method: "DELETE",
+    path: "/api/research/:id",
+    group: "Research",
+    summary: "Delete a job and everything derived from it",
+    description: "Removes scraped items, the persona, interviews, and the persona's ElevenLabs agent.",
+    auth: "user",
+    params: { id: "Job ID" },
+    response: { status: 204 },
+  },
+  {
+    method: "GET",
+    path: "/api/research/:id/items",
+    group: "Research",
+    summary: "Scraped profiles and posts",
+    description: "Normalized items, newest first, for the profile and feed views.",
+    auth: "user",
+    params: { id: "Job ID" },
+    query: {
+      platform: "Filter by platform",
+      kind: "profile | post | comment",
+      limit: "1-200 (default 50)",
+      offset: "Pagination offset (default 0)",
+      raw: "Set to 1 to include the original Apify item as `data`",
+    },
+    response: {
+      status: 200,
+      example: {
+        items: [
+          {
+            id: 412,
+            platform: "instagram",
+            kind: "post",
+            external_id: "3311…",
+            url: "https://www.instagram.com/p/…",
+            author: "janedoe",
+            text: "Sunrise at the Gunks. No notes.",
+            posted_at: "2026-09-30T11:02:00Z",
+            metrics: { likes: 1204, comments: 48 },
+            media: ["https://…jpg"],
+          },
+        ],
+        total: 31,
+        limit: 50,
+        offset: 0,
+      },
+    },
+  },
+  {
+    method: "POST",
+    path: "/api/research/:id/persona",
+    group: "Research",
+    summary: "Regenerate the persona",
+    description: "Rebuilds the persona from all scraped data. Returns 409 while the job is still scraping. Poll the job afterwards.",
+    auth: "user",
+    params: { id: "Job ID" },
+    response: { status: 202, example: { persona: { ...persona, status: "generating", profile: null } } },
+  },
+
+  // ── Personas & interviews
+  {
+    method: "GET",
+    path: "/api/personas/:id",
+    group: "Personas & interviews",
+    summary: "Get a persona",
+    auth: "user",
+    params: { id: "Persona ID (from `persona.id` on the job)" },
+    response: { status: 200, example: { persona } },
+  },
+  {
+    method: "POST",
+    path: "/api/personas/:id/interviews",
+    group: "Personas & interviews",
+    summary: "Start a simulated voice interview",
+    description:
+      "Creates the persona's ElevenLabs voice agent on first use and returns a session for the browser. Pass `session` straight to `conversation.startSession(session)` from `@elevenlabs/react`. Returns 409 if the persona isn't ready.",
+    auth: "user",
+    params: { id: "Persona ID" },
+    body: StartInterview,
+    bodyExample: {},
+    response: {
+      status: 201,
+      example: {
+        interview: { id: "e77d…", persona_id: "5a9b…", status: "pending", elevenlabs_conversation_id: "conv_…" },
+        agentId: "agent_…",
+        session: { conversationToken: "eyJ…" },
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/personas/:id/interviews",
+    group: "Personas & interviews",
+    summary: "Past interviews with a persona",
+    auth: "user",
+    params: { id: "Persona ID" },
+    response: { status: 200, example: { interviews: [{ id: "e77d…", status: "done", duration_secs: 312, created_at: "…" }] } },
+  },
+  {
+    method: "GET",
+    path: "/api/interviews/:id",
+    group: "Personas & interviews",
+    summary: "Interview transcript",
+    description: "Fetches the transcript from ElevenLabs if the post-call webhook hasn't delivered it yet.",
+    auth: "user",
+    params: { id: "Interview ID" },
+    response: {
+      status: 200,
+      example: {
+        interview: {
+          id: "e77d…",
+          status: "done",
+          duration_secs: 312,
+          transcript: [
+            { role: "agent", message: "Hey! Okay, I'm told you have questions. Go easy on me.", time_in_call_secs: 0 },
+            { role: "user", message: "How did you start shooting climbing?", time_in_call_secs: 6 },
+          ],
+          analysis: { transcript_summary: "…" },
+        },
+      },
+    },
+  },
+
+  // ── AI & voice
+  {
+    method: "POST",
+    path: "/api/ai/chat",
+    group: "AI & voice",
+    summary: "Streaming chat with the research assistant",
+    description:
+      "Streams the reply as plain text chunks. With `jobId`, answers are grounded in that job's persona (\"what does she think about X?\").",
+    auth: "user",
+    body: Chat,
+    bodyExample: { jobId: "8f0c…", messages: [{ role: "user", content: "What topics does she post about most?" }] },
+    response: { status: 200, contentType: "text/plain (streamed)", note: "Read with `res.body.getReader()`." },
+  },
+  {
+    method: "POST",
+    path: "/api/voice/tts",
+    group: "AI & voice",
+    summary: "Text to speech",
+    auth: "user",
+    body: Tts,
+    bodyExample: { text: "Here's what I found about Jane." },
+    response: { status: 200, contentType: "audio/mpeg (streamed)", note: "Play with `new Audio(URL.createObjectURL(await res.blob()))`." },
+  },
+
+  // ── Webhooks
+  {
+    method: "POST",
+    path: "/api/webhooks/apify",
+    group: "Webhooks",
+    summary: "Apify run finished",
+    description:
+      "Registered automatically on every Apify run when PUBLIC_API_URL is set. Authenticated with `?secret=APIFY_WEBHOOK_SECRET`. Don't call it from the frontend.",
+    auth: "webhook",
+    response: { status: 200, example: { ok: true, jobStatus: "analyzing" } },
+  },
+  {
+    method: "POST",
+    path: "/api/webhooks/elevenlabs",
+    group: "Webhooks",
+    summary: "ElevenLabs post-call transcript",
+    description:
+      "Set this URL as the post-call webhook in ElevenLabs and put its secret in ELEVENLABS_WEBHOOK_SECRET. Verified with the `ElevenLabs-Signature` HMAC header.",
+    auth: "webhook",
+    response: { status: 200, example: { ok: true } },
+  },
+];
+
+export type BodyField = { name: string; type: string; required: boolean; description: string };
+
+/** Flattens a body schema into rows for docs (one level of nesting for arrays of objects). */
+export function bodyFields(schema: z.ZodType): BodyField[] {
+  const json = z.toJSONSchema(schema, { io: "input", unrepresentable: "any" }) as JsonSchema;
+  return fieldsOf(json, "");
+}
+
+type JsonSchema = {
+  type?: string | string[];
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  items?: JsonSchema;
+  enum?: unknown[];
+  format?: string;
+  description?: string;
+  minimum?: number;
+  maximum?: number;
+  maxLength?: number;
+  default?: unknown;
+};
+
+function fieldsOf(schema: JsonSchema, prefix: string): BodyField[] {
+  const out: BodyField[] = [];
+  for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+    const name = prefix + key;
+    out.push({
+      name,
+      type: typeOf(prop),
+      required: schema.required?.includes(key) ?? false,
+      description: prop.description ?? "",
+    });
+    if (prop.type === "array" && prop.items?.properties) out.push(...fieldsOf(prop.items, `${name}[].`));
+  }
+  return out;
+}
+
+function typeOf(s: JsonSchema): string {
+  if (s.enum) return s.enum.map((v) => JSON.stringify(v)).join(" | ");
+  if (s.type === "array") return `${s.items ? typeOf(s.items) : "any"}[]`;
+  let t = Array.isArray(s.type) ? s.type.join(" | ") : (s.type ?? "any");
+  if (s.format === "uuid") t = "uuid";
+  if (s.type === "object" && s.properties) t = "object";
+  return t;
+}
+
+/** JSON-friendly catalog for GET /api. */
+export function catalogJson() {
+  return routes.map(({ body, bodyExample, ...rest }) => ({
+    ...rest,
+    ...(body ? { body: { fields: bodyFields(body), example: bodyExample } } : {}),
+  }));
+}

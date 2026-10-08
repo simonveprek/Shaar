@@ -1,19 +1,10 @@
-import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { env } from "@/lib/env";
+import { Chat } from "@/lib/schemas";
 import { handle, maybe, readJson } from "@/lib/http";
 import { openai } from "@/lib/openai";
 import { getJob, type PersonaRow } from "@/lib/research";
 import { db } from "@/lib/supabase";
-
-const Chat = z.object({
-  messages: z
-    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().min(1).max(20_000) }))
-    .min(1)
-    .max(50),
-  /** Ground the chat in a research job's persona ("what does she think about X?"). */
-  jobId: z.uuid().optional(),
-});
 
 const BASE_INSTRUCTIONS =
   "You are a research assistant in a social media deep research app. Answer concisely and say when the research data does not cover a question.";

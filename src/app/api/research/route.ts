@@ -1,23 +1,8 @@
-import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { CreateJob } from "@/lib/schemas";
 import { handle, must, readJson } from "@/lib/http";
 import { createJob } from "@/lib/research";
 import { db } from "@/lib/supabase";
-
-const CreateJob = z.object({
-  subjectName: z.string().trim().min(1).max(200),
-  notes: z.string().max(2000).optional(),
-  targets: z
-    .array(
-      z.object({
-        platform: z.string(),
-        target: z.string().trim().min(1).max(500),
-        maxPosts: z.number().int().min(1).max(500).optional(),
-      }),
-    )
-    .min(1)
-    .max(20),
-});
 
 /** Start a research job: one Apify run per target. Poll GET /api/research/:id for progress. */
 export const POST = handle(async (req: Request) => {

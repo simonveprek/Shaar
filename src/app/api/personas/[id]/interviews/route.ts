@@ -1,14 +1,9 @@
 import type { NextRequest } from "next/server";
-import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { StartInterview } from "@/lib/schemas";
 import { handle, must, readJson } from "@/lib/http";
 import { getPersona, startInterview } from "@/lib/interviews";
 import { db } from "@/lib/supabase";
-
-const StartInterview = z.object({
-  voiceId: z.string().min(1).optional(),
-  transport: z.enum(["webrtc", "websocket"]).default("webrtc"),
-});
 
 /**
  * Start a simulated voice interview with the persona. Pass `session` to the ElevenLabs React SDK:

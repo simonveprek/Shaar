@@ -113,6 +113,8 @@ Users only ever see their own rows.
 
 | Method & route | Body / query | Response |
 | --- | --- | --- |
+| `GET /api` | | Machine-readable index of every route (method, path, auth, body fields + example, response example) |
+| `GET /docs` (page) | | Human docs: every route with curl examples. `/` redirects here |
 | `GET /api/health` | | `{ ok, time }` |
 | `GET /api/connectors` | | `{ connectors: [{ platform, label, targetHint, notes, actors: [{ actorId, role }] }] }` |
 | `GET /api/connectors/:platform` | | `{ connector }` |
@@ -202,11 +204,17 @@ src/
     persona.ts            PersonaProfile schema, digest builder, OpenAI start/poll, agent system prompt
     interviews.ts         ensureAgent, startInterview, syncInterview
     elevenlabs.ts         REST client, TTS, webhook HMAC verification
+    schemas.ts            zod request-body schemas (shared by routes and docs)
+    api-catalog.ts        list of every route → GET /api and /docs
     apify.ts / openai.ts / supabase.ts   lazily created clients
+  app/docs/               the /docs page
 ```
 
 Conventions:
 
+- **Every route is listed in `src/lib/api-catalog.ts`**, which powers `GET /api` and `/docs`. Adding or
+  changing a route means updating its entry there. Request bodies live in `src/lib/schemas.ts`, shared by
+  the route (validation) and the catalog (field docs), so add `.describe()` text to new fields.
 - **Routes** are `export const GET = handle(async (req, ctx: RouteContext<"/api/...">) => ...)`. Call
   `requireUser(req)` first, validate bodies with `readJson(req, zodSchema)`, throw `HttpError` for
   expected failures. Don't catch and return errors by hand.
