@@ -841,13 +841,11 @@
 }
 .fbItem q {
   display: block;
-  padding-left: 12px;
-  border-left: 3px solid var(--line);
   color: var(--ink);
   font-style: italic;
 }
 .fbItem p {
-  margin: 4px 0 0 15px;
+  margin: 4px 0 0;
   color: var(--ink-2);
 }
 .fbWarn {
@@ -856,9 +854,6 @@
 }
 .fbWarn .fbH2 {
   color: #b06000;
-}
-.fbWarn .fbItem q {
-  border-left-color: #f9ab00;
 }
 .fbList,
 .fbTips {
