@@ -455,7 +455,7 @@ product. Every screen works at 375 px wide. See [`AGENTS.md`](AGENTS.md) for the
 
 ## Team
 
-Built by **Šimon Vepřek** and **Michael Ptáček** in Prague, with Claude Code.
+Built by **Šimon Vepřek**, **Nhat Minh Duong** and **Michael Ptáček** in Prague, with Claude Code.
 
 With thanks to **Apify** and **ElevenLabs**, whose platforms do the seeing and the speaking, and to Agents 0.0.7
 for the night.
