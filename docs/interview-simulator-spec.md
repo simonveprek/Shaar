@@ -1,5 +1,7 @@
 # Interview Simulator: specifikace a implementační plán
 
+> **Pozn. (později):** Supabase byl nahrazen lokální databází (PGlite v `src/lib/db.ts`) a návštěvníci se prokazují visitor cookie místo Supabase tokenu. Zmínky o Supabase níže jsou historie plánu. Aktuální postup je v `docs/interview-integration.md`.
+
 > Moje část projektu **projstalker**: HR si nanečisto vyzkouší pohovor s hlasovou AI, která hraje konkrétního kandidáta (persona ze scrapingu), a po hovoru dostane od „kandidáta“ zpětnou vazbu, jak se u pohovoru cítil.
 >
 > Plán navazuje na existující backend (viz [`be.md`](../be.md)). **Počítá s tím, že scraping a tvorba persony ještě nejsou hotové.** Celá moje část proto zatím jede nad ručně připravenými kandidáty (fixtures) a na reálná data se napojí až nakonec.

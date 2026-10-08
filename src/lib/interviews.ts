@@ -1,6 +1,6 @@
-import { db } from "./supabase";
+import { json, maybeOne, one } from "./db";
 import { need } from "./env";
-import { HttpError, maybe, must, notFound } from "./http";
+import { HttpError, notFound } from "./http";
 import { createPersonaAgent, getConversation, getConversationToken, getSignedUrl, updatePersonaAgent } from "./elevenlabs";
 import type { PersonaRow } from "./research";
 import type { Difficulty } from "./candidate";
@@ -28,18 +28,20 @@ export type InterviewRow = {
 /** One `reportFeeling` call from the candidate agent; `t` is seconds into the call. */
 export type FeelingEvent = { t: number; feeling: string; intensity: number; reason: string };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function getPersona(personaId: string, userId: string): Promise<PersonaRow> {
-  const persona = maybe(
-    await db().from("personas").select().eq("id", personaId).eq("user_id", userId).maybeSingle<PersonaRow>(),
-  );
+  const persona = UUID.test(personaId)
+    ? await maybeOne<PersonaRow>("select * from personas where id = $1 and user_id = $2", [personaId, userId])
+    : null;
   if (!persona) throw notFound("Persona");
   return persona;
 }
 
 export async function getInterview(interviewId: string, userId: string): Promise<InterviewRow> {
-  const interview = maybe(
-    await db().from("interviews").select().eq("id", interviewId).eq("user_id", userId).maybeSingle<InterviewRow>(),
-  );
+  const interview = UUID.test(interviewId)
+    ? await maybeOne<InterviewRow>("select * from interviews where id = $1 and user_id = $2", [interviewId, userId])
+    : null;
   if (!interview) throw notFound("Interview");
   return interview;
 }
@@ -50,9 +52,7 @@ const MAX_FEELINGS = 500;
 export async function addFeelings(interview: InterviewRow, events: FeelingEvent[]): Promise<InterviewRow> {
   if (interview.status === "failed") throw new HttpError(409, "Interview failed");
   const feelings = [...interview.feelings, ...events].sort((a, b) => a.t - b.t).slice(0, MAX_FEELINGS);
-  return must(
-    await db().from("interviews").update({ feelings }).eq("id", interview.id).select().single<InterviewRow>(),
-  );
+  return one<InterviewRow>("update interviews set feelings = $1::jsonb where id = $2 returning *", [json(feelings), interview.id]);
 }
 
 /**
@@ -73,13 +73,9 @@ export async function ensureAgent(persona: PersonaRow, voiceId?: string): Promis
   if (agentId) await updatePersonaAgent(agentId, persona.profile, voice, persona.candidate);
   else agentId = await createPersonaAgent(persona.profile, voice, persona.candidate);
 
-  return must(
-    await db()
-      .from("personas")
-      .update({ elevenlabs_agent_id: agentId, voice_id: voice })
-      .eq("id", persona.id)
-      .select()
-      .single<PersonaRow>(),
+  return one<PersonaRow>(
+    "update personas set elevenlabs_agent_id = $1, voice_id = $2, updated_at = now() where id = $3 returning *",
+    [agentId, voice, persona.id],
   );
 }
 
@@ -103,17 +99,10 @@ export async function startInterview(
     conversationId = new URL(signed_url).searchParams.get("conversation_id");
   }
 
-  const interview = must(
-    await db()
-      .from("interviews")
-      .insert({
-        persona_id: persona.id,
-        user_id: persona.user_id,
-        elevenlabs_conversation_id: conversationId,
-        difficulty: opts.difficulty,
-      })
-      .select()
-      .single<InterviewRow>(),
+  const interview = await one<InterviewRow>(
+    `insert into interviews (persona_id, user_id, elevenlabs_conversation_id, difficulty)
+     values ($1, $2, $3, $4) returning *`,
+    [persona.id, persona.user_id, conversationId, opts.difficulty],
   );
 
   // Candidate agents read {{difficulty}} from their prompt, so every session must carry it.
@@ -149,18 +138,16 @@ export async function applyConversation(
 ): Promise<InterviewRow> {
   const status: InterviewRow["status"] =
     convo.status === "done" ? "done" : convo.status === "failed" ? "failed" : "active";
-  return must(
-    await db()
-      .from("interviews")
-      .update({
-        status,
-        transcript: convo.transcript ?? null,
-        analysis: convo.analysis ?? null,
-        duration_secs: convo.metadata?.call_duration_secs ?? null,
-        ended_at: status === "done" || status === "failed" ? new Date().toISOString() : null,
-      })
-      .eq("id", interviewId)
-      .select()
-      .single<InterviewRow>(),
+  return one<InterviewRow>(
+    `update interviews set status = $1, transcript = $2::jsonb, analysis = $3::jsonb, duration_secs = $4, ended_at = $5
+     where id = $6 returning *`,
+    [
+      status,
+      json(convo.transcript ?? null),
+      json(convo.analysis ?? null),
+      convo.metadata?.call_duration_secs ?? null,
+      status === "done" || status === "failed" ? new Date().toISOString() : null,
+      interviewId,
+    ],
   );
 }

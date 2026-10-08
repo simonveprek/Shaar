@@ -2,7 +2,7 @@
 
 Backend for the Projstalker social media deep research app. It scrapes a person's public profiles with
 **Apify**, builds a persona of them with **OpenAI**, and lets users hold a simulated voice interview with
-that persona through **ElevenLabs** Agents. Data lives in **Supabase**; the app deploys to **Netlify**.
+that persona through **ElevenLabs** Agents. It runs on localhost, with a local Postgres (PGlite) inside the app.
 
 It is a Next.js 16 app that serves only API routes (`src/app/api`), so it runs as a separate service
 next to the Next.js frontend.
@@ -33,8 +33,8 @@ Job status: `scraping` → `analyzing` → `ready` (or `failed`).
 
 ## API
 
-All routes except webhooks need `Authorization: Bearer <supabase access token>`
-(from `supabase.auth.getSession()` on the frontend).
+Visitors are identified by a signed `shaar_visitor` cookie, set the first time they start a search.
+The full, live list of routes is at `/docs` and `GET /api`.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -74,9 +74,7 @@ await conversation.startSession(session); // { conversationToken } for WebRTC
 // Afterwards: GET /api/interviews/:interview.id for the transcript
 ```
 
-The frontend can also read its own rows directly with the Supabase client (RLS allows reading your own
-data) and subscribe to Realtime changes on `research_jobs`, `connector_runs`, `personas` and `interviews`,
-so it doesn't need to poll.
+
 
 ## Connectors
 
@@ -87,9 +85,9 @@ add a file and register it in `src/connectors/index.ts`.
 ## Setup
 
 1. `npm install`
-2. Copy `.env.example` to `.env.local` and fill it in.
-3. Apply the database schema in `supabase/migrations/` (Supabase dashboard SQL editor, or `supabase db push`).
-4. `npm run dev` starts the API on http://localhost:4000, so the frontend keeps port 3000.
+2. Copy `.env.example` to `.env.local`. Add `APIFY_TOKEN` to search; the other keys are optional.
+3. `npm run dev`, then open http://localhost:4000. The database is created in `.data/shaar` on first use;
+   delete `.data` to start from empty.
 
 ### Deploying to Netlify
 

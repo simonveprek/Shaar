@@ -39,23 +39,3 @@ export async function readJson<T extends z.ZodType>(req: Request, schema: T): Pr
   }
   return schema.parse(body);
 }
-
-type DbResult<T> = { data: T | null; error: { message: string } | null };
-
-/** Returns the data of a Supabase query, throwing on a database error or a missing row. */
-export function must<T>(result: DbResult<T>): T {
-  check(result);
-  if (result.data === null) throw new HttpError(500, "Database returned no data");
-  return result.data;
-}
-
-/** Like `must`, but a missing row (from `maybeSingle()`) is returned as null. */
-export function maybe<T>(result: DbResult<T>): T | null {
-  check(result);
-  return result.data;
-}
-
-/** Throws on a database error; for writes whose result isn't needed. */
-export function check(result: { error: { message: string } | null }): void {
-  if (result.error) throw new HttpError(500, `Database error: ${result.error.message}`);
-}

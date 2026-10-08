@@ -45,7 +45,7 @@ function md(text: string): ReactNode[] {
 function curl(r: RouteDoc): string {
   const path = r.path.replace(/:(\w+)/g, (_, p) => `<${p}>`);
   const lines = [`curl${r.method === "GET" ? "" : ` -X ${r.method}`} "$API${path}"`];
-  if (r.auth === "user") lines.push(`  -H "Authorization: Bearer $TOKEN"`);
+  if (r.auth === "user") lines.push(`  -b shaar.jar -c shaar.jar`);
   if (r.body) {
     lines.push(`  -H "Content-Type: application/json"`);
     lines.push(`  -d '${JSON.stringify(r.bodyExample ?? {})}'`);
@@ -54,7 +54,7 @@ function curl(r: RouteDoc): string {
 }
 
 const METHOD_TONE = { GET: "neutral", POST: "strong", DELETE: "danger" } as const;
-const AUTH_LABEL: Record<Auth, string> = { user: "Bearer token", none: "Public", webhook: "Webhook only" };
+const AUTH_LABEL: Record<Auth, string> = { user: "Visitor", none: "Public", webhook: "Webhook only" };
 
 /** Definition rows on a panel, the way Fragms lays out an API reference. */
 function Rows({ title, rows }: { title: string; rows: { name: string; meta?: ReactNode; note: ReactNode }[] }) {
@@ -144,41 +144,33 @@ function Route({ r }: { r: RouteDoc }) {
 
 const steps = [
   {
-    title: "Get the user's token",
-    body: "Sign in with Supabase on the frontend and send its access token as a Bearer token.",
-    code: `const { data } = await supabase.auth.getSession();
-const token = data.session!.access_token;
-const api = (path: string, init: RequestInit = {}) =>
-  fetch(\`\${process.env.NEXT_PUBLIC_API_URL}\${path}\`, {
-    ...init,
-    headers: { Authorization: \`Bearer \${token}\`, "Content-Type": "application/json", ...init.headers },
-  });`,
+    title: "Call the API from the page",
+    body: "Same origin, so the visitor cookie goes along on its own. The first search or job creates it.",
+    code: `const api = (path: string, init: RequestInit = {}) =>
+  fetch(path, { ...init, credentials: "same-origin", headers: { "Content-Type": "application/json", ...init.headers } })
+    .then((res) => res.json());`,
   },
   {
-    title: "Start research",
-    body: "Give a name and one or more profiles. Apify scrapes them in the background.",
-    code: `const { job } = await (await api("/api/research", {
+    title: "Find their accounts",
+    body: "One web search per platform for the name. Poll until it is ready, then let the visitor confirm which accounts are really them.",
+    code: `let { discovery } = await api("/api/discover", { method: "POST", body: JSON.stringify({ name: "Jane Doe" }) });
+while (discovery.status === "searching") {
+  await new Promise((r) => setTimeout(r, 2500));
+  ({ discovery } = await api(\`/api/discover/\${discovery.id}\`));
+}`,
+  },
+  {
+    title: "Start collecting",
+    body: "The confirmed accounts become the research job. Apify collects their public posts in the background.",
+    code: `const { job } = await api("/api/research", {
   method: "POST",
-  body: JSON.stringify({ subjectName: "Jane Doe", targets: [{ platform: "instagram", target: "@janedoe" }] }),
-})).json();`,
+  body: JSON.stringify({ subjectName: "Jane Doe", targets: confirmed.map((c) => ({ platform: c.platform, target: c.url })) }),
+});`,
   },
   {
-    title: "Wait for the persona",
-    body: "Poll the job every few seconds. It goes from scraping to analyzing to ready in a few minutes.",
-    code: `let state;
-do {
-  await new Promise((r) => setTimeout(r, 5000));
-  state = await (await api(\`/api/research/\${job.id}\`)).json();
-} while (!["ready", "failed"].includes(state.job.status));`,
-  },
-  {
-    title: "Interview them",
-    body: "Start a session and hand it to the ElevenLabs React SDK inside its ConversationProvider.",
-    code: `const { session } = await (await api(\`/api/personas/\${state.persona.id}/interviews\`, {
-  method: "POST",
-  body: "{}",
-})).json();
-await conversation.startSession(session);`,
+    title: "Read the file",
+    body: "Poll the file. It fills in as sources finish, or open /dossier/<job id> to see it.",
+    code: `const { dossier, jobStatus, sources } = await api(\`/api/research/\${job.id}/dossier\`);`,
   },
 ];
 
@@ -251,8 +243,8 @@ export default function DocsPage() {
               ))}
             </ol>
             <Text size="label" tone="muted" className="mt-3">
-              For the curl requests below, set <code className="font-mono">API=http://localhost:4000</code> and{" "}
-              <code className="font-mono">TOKEN</code> to an access token.
+              For the curl requests below, set <code className="font-mono">API=http://localhost:4000</code>. They keep the
+              visitor cookie in <code className="font-mono">shaar.jar</code>.
             </Text>
           </section>
 
@@ -260,12 +252,13 @@ export default function DocsPage() {
             <Heading id="auth-and-errors">Auth and errors</Heading>
             <div className="divide-y divide-border rounded-panel border border-border bg-card px-5 shadow-card">
               {[
-                ["Bearer token", "Routes marked Bearer token need `Authorization: Bearer <Supabase access token>`. People only see their own data. Someone else's IDs return 404."],
+                ["Visitor", "Routes marked Visitor need the signed `shaar_visitor` cookie, which the first search or job sets. People only see their own data. Someone else's IDs return 404."],
                 ["400", "The body is invalid. `details` lists each field that failed."],
-                ["401", "The token is missing or expired."],
+                ["401", "No visitor cookie yet. Start a search first."],
                 ["404", "Not found, or not yours."],
                 ["409", "Not ready yet, like interviewing a persona that is still being written."],
                 ["502", "Apify, OpenAI or ElevenLabs failed. Try again."],
+                ["503", "A service is not set up yet, like `Apify is not set up yet`. Add its key to `.env.local`."],
                 ["Platforms", "`instagram` `tiktok` `x` `linkedin` `youtube` `facebook` `reddit` `threads` `pinterest`. A target is a handle or a profile URL."],
               ].map(([name, note]) => (
                 <div key={name} className="grid gap-x-6 gap-y-1 py-3.5 sm:grid-cols-[140px_minmax(0,1fr)]">

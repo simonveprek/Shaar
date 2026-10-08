@@ -1,9 +1,9 @@
 import type { NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth";
+import { sql } from "@/lib/db";
 import { buildDossier, type DossierItem } from "@/lib/dossier";
-import { handle, maybe, must } from "@/lib/http";
-import { advanceJob, getJob, type PersonaRow } from "@/lib/research";
-import { db } from "@/lib/supabase";
+import { handle } from "@/lib/http";
+import { advanceJob, getJob, loadPersona } from "@/lib/research";
 
 /** The watcher's file for a research job: exposure, routine, presence, circle and their own words. */
 export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/research/[id]/dossier">) => {
@@ -12,16 +12,12 @@ export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/resea
   await getJob(id, user.id);
   const { job, runs } = await advanceJob(id);
 
-  const items = must(
-    await db()
-      .from("scraped_items")
-      .select("platform, kind, author, text, posted_at, url, metrics")
-      .eq("job_id", id)
-      .order("posted_at", { ascending: false, nullsFirst: false })
-      .limit(3000)
-      .returns<DossierItem[]>(),
+  const items = await sql<DossierItem>(
+    `select platform, kind, author, text, posted_at, url, metrics from scraped_items
+     where job_id = $1 order by posted_at desc nulls last limit 3000`,
+    [id],
   );
-  const persona = maybe(await db().from("personas").select().eq("job_id", id).maybeSingle<PersonaRow>());
+  const persona = await loadPersona(id);
 
   const dossier = buildDossier({
     jobId: job.id,

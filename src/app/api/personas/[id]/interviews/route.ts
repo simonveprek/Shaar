@@ -1,9 +1,9 @@
 import type { NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth";
+import { sql } from "@/lib/db";
 import { StartInterview } from "@/lib/schemas";
-import { handle, must, readJson } from "@/lib/http";
+import { handle, readJson } from "@/lib/http";
 import { getPersona, startInterview } from "@/lib/interviews";
-import { db } from "@/lib/supabase";
 
 /**
  * Start a simulated voice interview with the persona. Pass `session` to the ElevenLabs React SDK:
@@ -15,7 +15,7 @@ export const POST = handle(async (req: NextRequest, ctx: RouteContext<"/api/pers
   const { id } = await ctx.params;
   const body = await readJson(req, StartInterview);
   const persona = await getPersona(id, user.id);
-  const result = await startInterview(persona, { ...body, participantName: user.email });
+  const result = await startInterview(persona, body);
   return Response.json(result, { status: 201 });
 });
 
@@ -24,12 +24,10 @@ export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/perso
   const user = await requireUser(req);
   const { id } = await ctx.params;
   await getPersona(id, user.id);
-  const interviews = must(
-    await db()
-      .from("interviews")
-      .select("id, status, duration_secs, created_at, ended_at, elevenlabs_conversation_id")
-      .eq("persona_id", id)
-      .order("created_at", { ascending: false }),
+  const interviews = await sql(
+    `select id, status, duration_secs, created_at, ended_at, elevenlabs_conversation_id
+     from interviews where persona_id = $1 order by created_at desc`,
+    [id],
   );
   return Response.json({ interviews });
 });

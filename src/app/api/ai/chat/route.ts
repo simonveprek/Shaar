@@ -1,10 +1,9 @@
 import { requireUser } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { Chat } from "@/lib/schemas";
-import { handle, maybe, readJson } from "@/lib/http";
+import { handle, readJson } from "@/lib/http";
 import { openai } from "@/lib/openai";
-import { getJob, type PersonaRow } from "@/lib/research";
-import { db } from "@/lib/supabase";
+import { getJob, loadPersona } from "@/lib/research";
 
 const BASE_INSTRUCTIONS =
   "You are a research assistant in a social media deep research app. Answer concisely and say when the research data does not cover a question.";
@@ -17,7 +16,7 @@ export const POST = handle(async (req: Request) => {
   let instructions = BASE_INSTRUCTIONS;
   if (body.jobId) {
     const job = await getJob(body.jobId, user.id);
-    const persona = maybe(await db().from("personas").select().eq("job_id", job.id).maybeSingle<PersonaRow>());
+    const persona = await loadPersona(job.id);
     instructions += `\n\nResearch subject: ${job.subject_name}.`;
     if (persona?.profile) instructions += `\nPersona built from their public posts:\n${JSON.stringify(persona.profile)}`;
   }

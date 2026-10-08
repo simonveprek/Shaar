@@ -450,7 +450,7 @@ export const routes: RouteDoc[] = [
     group: "Local testing",
     summary: "Candidate feedback for a test call (next dev only)",
     description:
-      "For calls on `/meet?agent=…&fixture=…` with a test agent from `npm run try:agent`, without Supabase or auth. Returns 202 `processing` until ElevenLabs has processed the call, then 202 `{ responseId }`; poll `GET /api/dev/feedback?responseId=…&conversationId=…` until `ready` or `failed`. 404 in production builds.",
+      "For calls on `/meet?agent=…&fixture=…` with a test agent from `npm run try:agent`, without the database or a visitor cookie. Returns 202 `processing` until ElevenLabs has processed the call, then 202 `{ responseId }`; poll `GET /api/dev/feedback?responseId=…&conversationId=…` until `ready` or `failed`. 404 in production builds.",
     auth: "none",
     body: DevFeedback,
     bodyExample: { conversationId: "conv_…", fixture: "alex-novak", difficulty: "realistic", feelings: [] },

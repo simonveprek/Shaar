@@ -2,8 +2,8 @@ import { listConnectors } from "@/connectors";
 import { parseProfileUrl, PROFILE_SITES } from "@/connectors/profile-url";
 import { apify, TERMINAL_RUN_STATUSES } from "./apify";
 import { env } from "./env";
-import { maybe, must, notFound } from "./http";
-import { db } from "./supabase";
+import { json, maybeOne, one } from "./db";
+import { HttpError, notFound } from "./http";
 
 /*
  * From a name to profiles. One Google search per platform for the name in
@@ -60,9 +60,12 @@ function matchScore(name: string, title: string, handle: string): number {
 }
 
 export async function startDiscovery(userId: string, name: string, purpose: string | null): Promise<DiscoveryRow> {
-  const row = must(
-    await db().from("discoveries").insert({ user_id: userId, name, purpose }).select().single<DiscoveryRow>(),
-  );
+  apify(); // Fails with "Apify is not set up yet" before anything is saved.
+  const row = await one<DiscoveryRow>("insert into discoveries (user_id, name, purpose) values ($1, $2, $3) returning *", [
+    userId,
+    name,
+    purpose,
+  ]);
   try {
     const queries = PROFILE_SITES.map((s) => `"${name.replace(/"/g, "")}" site:${s.site}`).join("\n");
     const run = await apify()
@@ -71,23 +74,21 @@ export async function startDiscovery(userId: string, name: string, purpose: stri
         { queries, maxPagesPerQuery: 1, mobileResults: false, saveHtml: false },
         { maxTotalChargeUsd: env().APIFY_MAX_CHARGE_USD_PER_RUN },
       );
-    return must(
-      await db().from("discoveries").update({ apify_run_id: run.id }).eq("id", row.id).select().single<DiscoveryRow>(),
-    );
+    return one<DiscoveryRow>("update discoveries set apify_run_id = $1 where id = $2 returning *", [run.id, row.id]);
   } catch (err) {
-    return must(
-      await db()
-        .from("discoveries")
-        .update({ status: "failed", error: `Could not start the search: ${err instanceof Error ? err.message : err}` })
-        .eq("id", row.id)
-        .select()
-        .single<DiscoveryRow>(),
-    );
+    // A missing Apify token is a setup problem the visitor should hear about plainly, not a failed search.
+    if (err instanceof HttpError) throw err;
+    return one<DiscoveryRow>("update discoveries set status = 'failed', error = $1 where id = $2 returning *", [
+      `Could not start the search: ${err instanceof Error ? err.message : err}`,
+      row.id,
+    ]);
   }
 }
 
 export async function getDiscovery(id: string, userId: string): Promise<DiscoveryRow> {
-  const row = maybe(await db().from("discoveries").select().eq("id", id).eq("user_id", userId).maybeSingle<DiscoveryRow>());
+  const row = /^[0-9a-f-]{36}$/i.test(id)
+    ? await maybeOne<DiscoveryRow>("select * from discoveries where id = $1 and user_id = $2", [id, userId])
+    : null;
   if (!row) throw notFound("Discovery");
   return row;
 }
@@ -130,18 +131,10 @@ export async function syncDiscovery(row: DiscoveryRow): Promise<DiscoveryRow> {
 
   const failed = run.status !== "SUCCEEDED" && kept.length === 0;
   // Conditional on still searching, so two pollers can't both write. The loser re-reads the winner's result.
-  const updated = maybe(
-    await db()
-      .from("discoveries")
-      .update({
-        status: failed ? "failed" : "ready",
-        candidates: kept,
-        error: failed ? `Search ${run.status}` : null,
-      })
-      .eq("id", row.id)
-      .eq("status", "searching")
-      .select()
-      .maybeSingle<DiscoveryRow>(),
+  const updated = await maybeOne<DiscoveryRow>(
+    `update discoveries set status = $1, candidates = $2::jsonb, error = $3
+     where id = $4 and status = 'searching' returning *`,
+    [failed ? "failed" : "ready", json(kept), failed ? `Search ${run.status}` : null, row.id],
   );
   return updated ?? getDiscovery(row.id, row.user_id);
 }

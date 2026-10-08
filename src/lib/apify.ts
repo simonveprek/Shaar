@@ -1,10 +1,10 @@
 import { ApifyClient } from "apify-client";
-import { env } from "./env";
+import { need } from "./env";
 
 let client: ApifyClient | undefined;
 
 export function apify(): ApifyClient {
-  client ??= new ApifyClient({ token: env().APIFY_TOKEN });
+  client ??= new ApifyClient({ token: need("APIFY_TOKEN", "Apify") });
   return client;
 }
 

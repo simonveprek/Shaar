@@ -5,7 +5,7 @@ export async function GET() {
   return Response.json({
     name: "Shaar API",
     docs: "/docs",
-    auth: "Send `Authorization: Bearer <Supabase access token>` to routes with auth: \"user\".",
+    auth: "Routes with auth: \"user\" need the signed shaar_visitor cookie, set by the first POST /api/discover or /api/research.",
     errors: "Errors are JSON { error, details? } with a matching HTTP status.",
     routes: catalogJson(),
   });

@@ -26,7 +26,13 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
   if (!res.ok) {
-    const message = res.status >= 500 ? "Shaar could not reach its sources. Try again." : body?.error ?? "Something went wrong";
+    // 503 is a setup problem with a plain message worth showing as is. Other server errors stay vague.
+    const message =
+      res.status === 503 && body?.error
+        ? body.error
+        : res.status >= 500
+          ? "Shaar could not reach its sources. Try again."
+          : (body?.error ?? "Something went wrong");
     throw new ApiError(res.status, message);
   }
   return body as T;
