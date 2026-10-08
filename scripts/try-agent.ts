@@ -1,5 +1,5 @@
 /*
- * Try a candidate agent with only an ElevenLabs key: no Supabase, no OpenAI, no frontend.
+ * Try a candidate agent with only an ElevenLabs key: no database, no OpenAI, no frontend.
  * Builds the agent from a fixture with exactly the backend's config, then you talk to it in the
  * ElevenLabs dashboard ("Test AI agent").
  *

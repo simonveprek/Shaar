@@ -1,9 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
+import { maybeOne } from "@/lib/db";
 import { env } from "@/lib/env";
-import { handle, maybe } from "@/lib/http";
+import { handle } from "@/lib/http";
 import { advanceJob, type RunRow } from "@/lib/research";
-import { db } from "@/lib/supabase";
 
 /**
  * Called by Apify when a connector run finishes (registered per run when PUBLIC_API_URL is set).
@@ -21,9 +21,7 @@ export const POST = handle(async (req: NextRequest) => {
   const apifyRunId = payload?.eventData?.actorRunId;
   if (!apifyRunId) return Response.json({ error: "Missing eventData.actorRunId" }, { status: 400 });
 
-  const run = maybe(
-    await db().from("connector_runs").select().eq("apify_run_id", apifyRunId).maybeSingle<RunRow>(),
-  );
+  const run = await maybeOne<RunRow>("select * from connector_runs where apify_run_id = $1", [apifyRunId]);
   if (!run) return Response.json({ ok: true, ignored: "unknown run" });
 
   const { job } = await advanceJob(run.job_id);

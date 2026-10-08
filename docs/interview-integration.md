@@ -14,7 +14,7 @@ MeetCall UI ── POST /personas/:id/interviews ──► agent + token ──�
      │ konec hovoru                                  ◄── post-call webhook (přepis) ── ElevenLabs
      └─ polling ──► GET /interviews/:id ──► feedback (OpenAI, na pozadí) ────────────► OpenAI
                                                      ▲
-                                              Supabase (personas, interviews)
+                                    lokální Postgres v aplikaci (PGlite, .data/shaar)
 ```
 
 ---
@@ -25,13 +25,14 @@ MeetCall UI ── POST /personas/:id/interviews ──► agent + token ──�
 
 Sloučit větev `feature/interview-simulator` do `main` přes PR. Netlify nasadí automaticky. Před sloučením spustit `npm run typecheck && npm run lint && npm run build`.
 
-### 1.2 Databáze (Supabase)
+### 1.2 Databáze (lokální)
 
-Spustit migraci [`supabase/migrations/20261009000000_interview_simulator.sql`](../supabase/migrations/20261009000000_interview_simulator.sql) v **Supabase → SQL Editor** (nebo `supabase db push`).
+Supabase už se nepoužívá. Databáze je PGlite (Postgres ve WebAssembly) přímo v serveru, uložená v `.data/shaar`.
+Schéma je v `SCHEMA` v [`src/lib/db.ts`](../src/lib/db.ts) a použije se při startu, takže **není co migrovat**.
 
-- Přidává jen sloupce: `personas.candidate` a v `interviews` sloupce `difficulty`, `feelings` a `feedback*`. Existující data nemění.
-- Projekt je sdílený s jinou aplikací, takže **nesahat na jiné tabulky**.
-- **Bez migrace nové endpointy padají** (500 „column does not exist“), proto ji spustit dřív, než se nasadí kód.
+- Sloupce simulátoru (`personas.candidate`, v `interviews` `difficulty`, `feelings` a `feedback*`) se přidají přes `add column if not exists`, takže se starší lokální databáze sama doplní.
+- `rm -rf .data` začne s prázdnou databází.
+- Běží v jednom procesu serveru, takže je to řešení pro localhost, ne pro Netlify.
 
 ### 1.3 Proměnné prostředí (Netlify → Site configuration → Environment variables)
 
@@ -43,10 +44,10 @@ Spustit migraci [`supabase/migrations/20261009000000_interview_simulator.sql`](.
 | `ELEVENLABS_WEBHOOK_SECRET` | ✅ v produkci | Secret z post-call webhooku (1.4) |
 | `OPENAI_API_KEY` | ✅ | Feedback a persony |
 | `OPENAI_FEEDBACK_MODEL` | – | Default = `OPENAI_PERSONA_MODEL` |
-| `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | ✅ | |
 | `CORS_ORIGINS` | ✅ | URL frontendu, např. `https://projstalker.netlify.app` (víc hodnot oddělit čárkou) |
 | `PUBLIC_API_URL` | ✅ v produkci | URL backendu (Apify webhooky) |
-| `APIFY_TOKEN`, `APIFY_WEBHOOK_SECRET` | ✅ | Validace env je vyžaduje i pro interview část |
+| `APIFY_TOKEN` | – | Jen pro hledání a sběr dat. Interview ho nepotřebuje |
+| `APIFY_WEBHOOK_SECRET` | – | Jen s `PUBLIC_API_URL` |
 
 ### 1.4 ElevenLabs post-call webhook
 
@@ -57,13 +58,16 @@ Webhook není nutný, ale zrychlí výsledky. Bez něj si přepis stáhne pollin
 
 ### 1.5 Kandidáti
 
-Dokud scraping neplní `personas.candidate`, nahrát fiktivní kandidáty pod účet, který bude demovat:
+Dokud scraping neplní `personas.candidate`, nahrát fiktivní kandidáty. Návštěvníci nemají účty, patří jim to,
+co vytvoří pod svou visitor cookie. Proto se kandidáti nahrávají v prohlížeči, ve kterém se bude demovat: se spuštěným
+`npm run dev` otevřít
 
-```bash
-npm run seed:candidates -- --user <email-uzivatele-v-supabase>
+```
+http://localhost:4000/api/dev/seed-candidates
 ```
 
-Výpis vrátí `persona <id>` pro každého kandidáta. Tohle ID frontend použije ve všech voláních. Opakované spuštění kandidáty aktualizuje a neduplikuje.
+Odpověď vrátí `personaId` pro každého kandidáta. Tohle ID frontend použije ve všech voláních. Opakované otevření
+kandidáty aktualizuje a neduplikuje. `npm run seed:candidates -- --check` jen zkontroluje fixtures.
 
 > Persona **bez** `candidate` se chová jako obecná persona: mluví první, nemá obtížnost ani hlášení pocitů. HR mode se zapne jen u person s kandidátskou vrstvou.
 
@@ -89,7 +93,7 @@ Kdyby někdy vznikl oddělený frontend, zkopíruje se `src/components/meet/` a 
 
 ### 2.2 Autentizace
 
-Prohlížeč volá API na stejném originu přes helper `api()` ze `src/lib/client.ts`. Návštěvník se nikde nepřihlašuje. Server mu při prvním spuštění hledání nebo jobu vytvoří tichého uživatele a pozná ho podle podepsané httpOnly cookie `shaar_visitor` (`src/lib/auth.ts`). Oddělený frontend s vlastním přihlášením může místo cookie posílat `Authorization: Bearer <Supabase access token>`.
+Prohlížeč volá API na stejném originu přes helper `api()` ze `src/lib/client.ts`. Návštěvník se nikde nepřihlašuje. Server mu při prvním spuštění hledání nebo jobu dá náhodné ID v podepsané httpOnly cookie `shaar_visitor` (`src/lib/auth.ts`) a podle něj ho pozná.
 
 ```ts
 import { api, ApiError } from "@/lib/client";
@@ -261,7 +265,7 @@ new Audio(URL.createObjectURL(await audio.blob())).play();
 
 `GET /api/personas/:id/interviews` vrátí seznam pohovorů s danou personou. Hodí se na srovnání zlepšení napříč obtížnostmi.
 
-Místo pollingu jde použít i **Supabase Realtime** na tabulce `interviews`, protože RLS dovolí číst vlastní řádky. Změny ale vznikají jen tehdy, když něco zavolá backend (webhook nebo polling), proto **lokálně polling nevynechávat**.
+Výsledky se získávají pollingem. Lokálně ho nic nenahradí, protože webhooky se na localhost nedostanou.
 
 ---
 
@@ -270,7 +274,7 @@ Místo pollingu jde použít i **Supabase Realtime** na tabulce `interviews`, pr
 | Co | Jak |
 |---|---|
 | Backend | `npm run dev`, běží na http://localhost:4000, dokumentace API na `/docs` |
-| Rychlý test hlasu **bez Supabase a OpenAI** | `npm run try:agent -- alex-novak --feelings` a pak otevřít `http://localhost:4000/meet?agent=<agent_id>&name=Alex%20Novak&role=Senior%20Frontend%20Engineer` |
+| Rychlý test hlasu **bez databáze a OpenAI** | `npm run try:agent -- alex-novak --feelings` a pak otevřít `http://localhost:4000/meet?agent=<agent_id>&name=Alex%20Novak&role=Senior%20Frontend%20Engineer` |
 | Přepis posledního testovacího hovoru | `npm run try:agent -- alex-novak --transcript` |
 | Náhled obrazovek bez hovoru | k URL `/meet` přidat `&ui=call` nebo `&ui=left` |
 | Test na stránce ElevenLabs | `npm run try:agent -- alex-novak` (bez `--feelings`, ta stránka client tool neumí) |

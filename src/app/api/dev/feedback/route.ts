@@ -10,7 +10,7 @@ import { CandidateBrief } from "@/lib/candidate";
 
 /*
  * Local testing only (`next dev`): candidate feedback for a call made on /meet?agent=… with a test agent from
- * `npm run try:agent`, without Supabase or auth. Needs ELEVENLABS_API_KEY and OPENAI_API_KEY. Stateless: the client
+ * `npm run try:agent`, without the database or a visitor cookie. Needs ELEVENLABS_API_KEY and OPENAI_API_KEY. Stateless: the client
  * polls with the returned responseId. The real app uses GET /api/interviews/:id instead.
  */
 

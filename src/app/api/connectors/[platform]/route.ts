@@ -1,10 +1,10 @@
 import type { NextRequest } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { RunConnector } from "@/lib/schemas";
-import { handle, must, readJson } from "@/lib/http";
+import { one } from "@/lib/db";
+import { handle, readJson } from "@/lib/http";
 import { getConnector, describeConnector } from "@/connectors";
 import { createJob, getJob, startConnector, type JobRow } from "@/lib/research";
-import { db } from "@/lib/supabase";
 
 /** Details for one connector. */
 export const GET = handle(async (_req: NextRequest, ctx: RouteContext<"/api/connectors/[platform]">) => {
@@ -17,7 +17,7 @@ export const GET = handle(async (_req: NextRequest, ctx: RouteContext<"/api/conn
  * finishes); without it, a new job is created.
  */
 export const POST = handle(async (req: NextRequest, ctx: RouteContext<"/api/connectors/[platform]">) => {
-  const user = await requireUser(req);
+  const user = await requireUser(req, { visitor: "create" });
   const { platform } = await ctx.params;
   getConnector(platform);
   const body = await readJson(req, RunConnector);
@@ -31,13 +31,9 @@ export const POST = handle(async (req: NextRequest, ctx: RouteContext<"/api/conn
   }
 
   await getJob(body.jobId, user.id);
-  const job = must(
-    await db()
-      .from("research_jobs")
-      .update({ status: "scraping", error: null })
-      .eq("id", body.jobId)
-      .select()
-      .single<JobRow>(),
+  const job = await one<JobRow>(
+    "update research_jobs set status = 'scraping', error = null, updated_at = now() where id = $1 returning *",
+    [body.jobId],
   );
   const runs = await startConnector(job, { platform, target: body.target, maxPosts: body.maxPosts });
   return Response.json({ job, runs }, { status: 201 });

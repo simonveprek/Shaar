@@ -1,9 +1,9 @@
+import { maybeOne } from "@/lib/db";
 import { env } from "@/lib/env";
-import { handle, maybe } from "@/lib/http";
+import { handle } from "@/lib/http";
 import { verifyWebhookSignature } from "@/lib/elevenlabs";
 import { startFeedback } from "@/lib/feedback";
 import { applyConversation } from "@/lib/interviews";
-import { db } from "@/lib/supabase";
 
 type PostCallEvent = {
   type: string;
@@ -29,13 +29,9 @@ export const POST = handle(async (req: Request) => {
   const event = JSON.parse(raw) as PostCallEvent;
   if (event.type !== "post_call_transcription") return Response.json({ ok: true, ignored: event.type });
 
-  const interview = maybe(
-    await db()
-      .from("interviews")
-      .select("id")
-      .eq("elevenlabs_conversation_id", event.data.conversation_id)
-      .maybeSingle<{ id: string }>(),
-  );
+  const interview = await maybeOne<{ id: string }>("select id from interviews where elevenlabs_conversation_id = $1", [
+    event.data.conversation_id,
+  ]);
   if (!interview) return Response.json({ ok: true, ignored: "unknown conversation" });
 
   const updated = await applyConversation(interview.id, { ...event.data, status: event.data.status || "done" });

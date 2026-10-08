@@ -2,8 +2,7 @@ import { z } from "zod";
 import { zodTextFormat } from "openai/helpers/zod";
 import { openai } from "./openai";
 import { envVar } from "./env";
-import { db } from "./supabase";
-import { check, maybe, must } from "./http";
+import { json, maybeOne, one, sql } from "./db";
 import type { TranscriptTurn } from "./elevenlabs";
 import type { FeelingEvent, InterviewRow } from "./interviews";
 import type { PersonaRow } from "./research";
@@ -65,13 +64,11 @@ export async function startFeedback(interview: InterviewRow, opts: { force?: boo
   if (interview.status !== "done") return interview;
 
   // Claim generation so the webhook and polling can't both start it. A forced restart may take over any state.
-  let claim = db()
-    .from("interviews")
-    .update({ feedback_status: "generating", feedback_response_id: null, feedback_error: null })
-    .eq("id", interview.id)
-    .eq("status", "done");
-  if (!opts.force) claim = claim.eq("feedback_status", "none");
-  const claimed = maybe(await claim.select().maybeSingle<InterviewRow>());
+  const claimed = await maybeOne<InterviewRow>(
+    `update interviews set feedback_status = 'generating', feedback_response_id = null, feedback_error = null
+     where id = $1 and status = 'done' and ($2::boolean or feedback_status = 'none') returning *`,
+    [interview.id, Boolean(opts.force)],
+  );
   if (!claimed) return reload(interview.id);
 
   try {
@@ -79,7 +76,7 @@ export async function startFeedback(interview: InterviewRow, opts: { force?: boo
     if (!transcript.some((t) => t.role === "user")) {
       return fail(claimed.id, NO_INTERVIEWER);
     }
-    const persona = must(await db().from("personas").select().eq("id", claimed.persona_id).single<PersonaRow>());
+    const persona = await one<PersonaRow>("select * from personas where id = $1", [claimed.persona_id]);
 
     const responseId = await startFeedbackResponse({
       profile: persona.profile,
@@ -88,14 +85,10 @@ export async function startFeedback(interview: InterviewRow, opts: { force?: boo
       feelings: claimed.feelings,
       transcript,
     });
-    return must(
-      await db()
-        .from("interviews")
-        .update({ feedback_response_id: responseId })
-        .eq("id", claimed.id)
-        .select()
-        .single<InterviewRow>(),
-    );
+    return one<InterviewRow>("update interviews set feedback_response_id = $1 where id = $2 returning *", [
+      responseId,
+      claimed.id,
+    ]);
   } catch (err) {
     return fail(claimed.id, `Could not start feedback: ${err instanceof Error ? err.message : err}`);
   }
@@ -112,15 +105,10 @@ export async function advanceFeedback(interview: InterviewRow): Promise<Intervie
 
   const feedback = poll.feedback;
   // Only the request that still sees this response as pending writes the result.
-  const updated = maybe(
-    await db()
-      .from("interviews")
-      .update({ feedback_status: "ready", feedback })
-      .eq("id", interview.id)
-      .eq("feedback_status", "generating")
-      .eq("feedback_response_id", interview.feedback_response_id)
-      .select()
-      .maybeSingle<InterviewRow>(),
+  const updated = await maybeOne<InterviewRow>(
+    `update interviews set feedback_status = 'ready', feedback = $1::jsonb
+     where id = $2 and feedback_status = 'generating' and feedback_response_id = $3 returning *`,
+    [json(feedback), interview.id, interview.feedback_response_id],
   );
   return updated ?? reload(interview.id);
 }
@@ -235,10 +223,10 @@ function safeJson(text: string): unknown {
 }
 
 async function fail(id: string, error: string): Promise<InterviewRow> {
-  check(await db().from("interviews").update({ feedback_status: "failed", feedback_error: error }).eq("id", id));
+  await sql("update interviews set feedback_status = 'failed', feedback_error = $1 where id = $2", [error, id]);
   return reload(id);
 }
 
 async function reload(id: string): Promise<InterviewRow> {
-  return must(await db().from("interviews").select().eq("id", id).single<InterviewRow>());
+  return one<InterviewRow>("select * from interviews where id = $1", [id]);
 }

@@ -2,11 +2,12 @@ import { z } from "zod";
 import { HttpError } from "./http";
 
 const schema = z.object({
-  SUPABASE_URL: z.url(),
-  SUPABASE_SECRET_KEY: z.string().min(1),
-  // Signs the visitor cookie. Optional: derived from SUPABASE_SECRET_KEY when unset.
+  // Where the local database lives. Defaults to .data/shaar in the project.
+  DATA_DIR: z.string().optional(),
+  // Signs the visitor cookie. Optional: a random one is made once and kept in .data.
   VISITOR_SECRET: z.string().min(16).optional(),
-  APIFY_TOKEN: z.string().min(1),
+  // The only key a real search needs. Everything comes from public data through Apify.
+  APIFY_TOKEN: z.string().min(1).optional(),
   // Needed only with PUBLIC_API_URL, to accept Apify webhooks.
   APIFY_WEBHOOK_SECRET: z.string().min(16).optional(),
   // Hard spending cap per actor run (all connectors use pay-per-event actors).
@@ -48,7 +49,7 @@ export function env(): Env {
 
 /**
  * One validated variable, without validating the rest. Lets a feature run with only its own service configured
- * (e.g. local voice tests with just an ElevenLabs key, no Supabase or Apify).
+ * (e.g. local voice tests with just an ElevenLabs key, no Apify).
  */
 export function envVar<K extends keyof Env>(key: K): Env[K] {
   if (cached) return cached[key];

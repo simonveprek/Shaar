@@ -1,9 +1,9 @@
 import { getActor, getConnector } from "@/connectors";
 import type { ActorSpec, ConnectorOptions } from "@/connectors/types";
 import { apify, TERMINAL_RUN_STATUSES } from "./apify";
-import { db } from "./supabase";
+import { json, maybeOne, one, setClause, sql } from "./db";
 import { env } from "./env";
-import { check, HttpError, maybe, must, notFound } from "./http";
+import { HttpError, notFound } from "./http";
 import { buildDigest, pollPersonaGeneration, startPersonaGeneration, type DigestItem } from "./persona";
 
 /*
@@ -71,13 +71,11 @@ export async function createJob(
   input: { subjectName: string; notes?: string; targets: Target[] },
 ): Promise<{ job: JobRow; runs: RunRow[] }> {
   for (const t of input.targets) getConnector(t.platform); // validate platforms before writing anything
+  apify(); // and that Apify is set up
 
-  const job = must(
-    await db()
-      .from("research_jobs")
-      .insert({ user_id: userId, subject_name: input.subjectName, notes: input.notes ?? null })
-      .select()
-      .single<JobRow>(),
+  const job = await one<JobRow>(
+    "insert into research_jobs (user_id, subject_name, notes) values ($1, $2, $3) returning *",
+    [userId, input.subjectName, input.notes ?? null],
   );
 
   const runs = (await Promise.all(input.targets.map((t) => startConnector(job, t)))).flat();
@@ -100,12 +98,10 @@ async function startActorRun(
   opts: ConnectorOptions,
 ): Promise<RunRow> {
   const input = actor.buildInput(target, opts);
-  const row = must(
-    await db()
-      .from("connector_runs")
-      .insert({ job_id: job.id, user_id: job.user_id, platform, target, actor_id: actor.actorId, input })
-      .select()
-      .single<RunRow>(),
+  const row = await one<RunRow>(
+    `insert into connector_runs (job_id, user_id, platform, target, actor_id, input)
+     values ($1, $2, $3, $4, $5, $6::jsonb) returning *`,
+    [job.id, job.user_id, platform, target, actor.actorId, json(input)],
   );
 
   try {
@@ -127,14 +123,11 @@ async function startActorRun(
         maxTotalChargeUsd: APIFY_MAX_CHARGE_USD_PER_RUN,
       });
 
-    return must(
-      await db()
-        .from("connector_runs")
-        .update({ apify_run_id: run.id, dataset_id: run.defaultDatasetId })
-        .eq("id", row.id)
-        .select()
-        .single<RunRow>(),
-    );
+    return one<RunRow>("update connector_runs set apify_run_id = $1, dataset_id = $2 where id = $3 returning *", [
+      run.id,
+      run.defaultDatasetId,
+      row.id,
+    ]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return finishRun(row.id, { status: "failed", error: `Could not start Apify actor: ${message}` });
@@ -156,14 +149,9 @@ export async function syncConnectorRun(run: RunRow): Promise<RunRow> {
   if (!apifyRun || !(TERMINAL_RUN_STATUSES as readonly string[]).includes(apifyRun.status)) return run;
 
   // Claim the run so a webhook and a polling request can't both ingest it.
-  const claimed = maybe(
-    await db()
-      .from("connector_runs")
-      .update({ status: "ingesting" })
-      .eq("id", run.id)
-      .eq("status", "running")
-      .select()
-      .maybeSingle<RunRow>(),
+  const claimed = await maybeOne<RunRow>(
+    "update connector_runs set status = 'ingesting' where id = $1 and status = 'running' returning *",
+    [run.id],
   );
   if (!claimed) return reloadRun(run.id);
 
@@ -212,7 +200,15 @@ async function ingestDataset(run: RunRow, datasetId: string): Promise<number> {
         })),
     );
     if (rows.length) {
-      check(await db().from("scraped_items").upsert(rows, { onConflict: "run_id,external_id", ignoreDuplicates: true }));
+      await sql(
+        `insert into scraped_items (job_id, run_id, user_id, platform, kind, external_id, url, author, text, posted_at, metrics, media, data)
+         select job_id, run_id, user_id, platform, kind, external_id, url, author, text, posted_at, metrics, media, data
+         from jsonb_to_recordset($1::jsonb) as r(
+           job_id uuid, run_id uuid, user_id text, platform text, kind text, external_id text, url text,
+           author text, text text, posted_at timestamptz, metrics jsonb, media jsonb, data jsonb)
+         on conflict (run_id, external_id) do nothing`,
+        [json(rows)],
+      );
     }
     offset += page.items.length;
     if (page.items.length < INGEST_PAGE_SIZE) break;
@@ -227,26 +223,30 @@ function leanRaw(raw: Record<string, unknown>): Record<string, unknown> {
 }
 
 async function finishRun(id: string, patch: Partial<RunRow>): Promise<RunRow> {
-  return must(
-    await db()
-      .from("connector_runs")
-      .update({ ...patch, finished_at: new Date().toISOString() })
-      .eq("id", id)
-      .select()
-      .single<RunRow>(),
-  );
+  const { set, params } = setClause({ ...patch, finished_at: new Date().toISOString() }, 2);
+  return one<RunRow>(`update connector_runs set ${set} where id = $1 returning *`, [id, ...params]);
 }
 
 async function reloadRun(id: string): Promise<RunRow> {
-  return must(await db().from("connector_runs").select().eq("id", id).single<RunRow>());
+  return one<RunRow>("select * from connector_runs where id = $1", [id]);
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function getJob(jobId: string, userId: string): Promise<JobRow> {
-  const job = maybe(
-    await db().from("research_jobs").select().eq("id", jobId).eq("user_id", userId).maybeSingle<JobRow>(),
-  );
+  const job = UUID.test(jobId)
+    ? await maybeOne<JobRow>("select * from research_jobs where id = $1 and user_id = $2", [jobId, userId])
+    : null;
   if (!job) throw notFound("Research job");
   return job;
+}
+
+export async function loadJob(jobId: string): Promise<JobRow> {
+  return one<JobRow>("select * from research_jobs where id = $1", [jobId]);
+}
+
+export async function loadPersona(jobId: string): Promise<PersonaRow | null> {
+  return maybeOne<PersonaRow>("select * from personas where job_id = $1", [jobId]);
 }
 
 /**
@@ -254,8 +254,8 @@ export async function getJob(jobId: string, userId: string): Promise<JobRow> {
  * (from status polling, Apify webhooks, or OpenAI completion).
  */
 export async function advanceJob(jobId: string): Promise<{ job: JobRow; runs: RunRow[]; persona: PersonaRow | null }> {
-  let job = must(await db().from("research_jobs").select().eq("id", jobId).single<JobRow>());
-  let runs = must(await db().from("connector_runs").select().eq("job_id", jobId).order("created_at").returns<RunRow[]>());
+  let job = await loadJob(jobId);
+  let runs = await sql<RunRow>("select * from connector_runs where job_id = $1 order by created_at", [jobId]);
 
   if (job.status === "scraping") {
     runs = await Promise.all(runs.map(syncConnectorRun));
@@ -268,28 +268,20 @@ export async function advanceJob(jobId: string): Promise<{ job: JobRow; runs: Ru
     }
   }
 
-  let persona = maybe(await db().from("personas").select().eq("job_id", jobId).maybeSingle<PersonaRow>());
+  let persona = await loadPersona(jobId);
 
   if (job.status === "analyzing" && persona?.status === "generating" && persona.openai_response_id) {
     const poll = await pollPersonaGeneration(persona.openai_response_id);
     if (poll.state === "ready") {
-      persona = must(
-        await db()
-          .from("personas")
-          .update({ status: "ready", profile: poll.profile })
-          .eq("id", persona.id)
-          .select()
-          .single<PersonaRow>(),
+      persona = await one<PersonaRow>(
+        "update personas set status = 'ready', profile = $1::jsonb, updated_at = now() where id = $2 returning *",
+        [json(poll.profile), persona.id],
       );
       job = await setJobStatus(job.id, "analyzing", { status: "ready" });
     } else if (poll.state === "failed") {
-      persona = must(
-        await db()
-          .from("personas")
-          .update({ status: "failed", error: poll.error })
-          .eq("id", persona.id)
-          .select()
-          .single<PersonaRow>(),
+      persona = await one<PersonaRow>(
+        "update personas set status = 'failed', error = $1, updated_at = now() where id = $2 returning *",
+        [poll.error, persona.id],
       );
       job = await setJobStatus(job.id, "analyzing", { status: "failed", error: `Persona generation failed: ${poll.error}` });
     }
@@ -300,21 +292,20 @@ export async function advanceJob(jobId: string): Promise<{ job: JobRow; runs: Ru
 
 /** Builds the digest and starts persona generation. Claims the job first so it only happens once. */
 async function startAnalysis(job: JobRow): Promise<JobRow> {
-  const claimed = maybe(
-    await db()
-      .from("research_jobs")
-      .update({ status: "analyzing" })
-      .eq("id", job.id)
-      .eq("status", "scraping")
-      .select()
-      .maybeSingle<JobRow>(),
+  const claimed = await maybeOne<JobRow>(
+    "update research_jobs set status = 'analyzing', updated_at = now() where id = $1 and status = 'scraping' returning *",
+    [job.id],
   );
-  if (!claimed) return must(await db().from("research_jobs").select().eq("id", job.id).single<JobRow>());
+  if (!claimed) return loadJob(job.id);
 
   try {
     await generatePersona(claimed);
     return claimed;
   } catch (err) {
+    // Without OpenAI there is no persona, but everything collected is still a complete file.
+    if (err instanceof HttpError && err.status === 503) {
+      return setJobStatus(job.id, "analyzing", { status: "ready", error: `${err.message}, so there is no persona` });
+    }
     const message = err instanceof Error ? err.message : String(err);
     return setJobStatus(job.id, "analyzing", { status: "failed", error: `Could not start analysis: ${message}` });
   }
@@ -322,36 +313,22 @@ async function startAnalysis(job: JobRow): Promise<JobRow> {
 
 /** (Re)starts persona generation for a job from its scraped items. */
 export async function generatePersona(job: JobRow): Promise<PersonaRow> {
-  const items = must(
-    await db()
-      .from("scraped_items")
-      .select("platform, kind, author, text, posted_at, url, metrics")
-      .eq("job_id", job.id)
-      .order("posted_at", { ascending: false, nullsFirst: false })
-      .limit(1500)
-      .returns<DigestItem[]>(),
+  const items = await sql<DigestItem>(
+    `select platform, kind, author, text, posted_at, url, metrics from scraped_items
+     where job_id = $1 order by posted_at desc nulls last limit 1500`,
+    [job.id],
   );
   if (!items.length) throw new HttpError(409, "This job has no scraped data yet");
 
   const { responseId, model } = await startPersonaGeneration(buildDigest(job.subject_name, job.notes, items));
 
-  return must(
-    await db()
-      .from("personas")
-      .upsert(
-        {
-          job_id: job.id,
-          user_id: job.user_id,
-          status: "generating",
-          model,
-          openai_response_id: responseId,
-          profile: null,
-          error: null,
-        },
-        { onConflict: "job_id" },
-      )
-      .select()
-      .single<PersonaRow>(),
+  return one<PersonaRow>(
+    `insert into personas (job_id, user_id, status, model, openai_response_id)
+     values ($1, $2, 'generating', $3, $4)
+     on conflict (job_id) do update set status = 'generating', model = excluded.model,
+       openai_response_id = excluded.openai_response_id, profile = null, error = null, updated_at = now()
+     returning *`,
+    [job.id, job.user_id, model, responseId],
   );
 }
 
@@ -360,14 +337,10 @@ async function setJobStatus(
   expected: JobRow["status"],
   patch: Partial<Pick<JobRow, "status" | "error">>,
 ): Promise<JobRow> {
-  const updated = maybe(
-    await db()
-      .from("research_jobs")
-      .update(patch)
-      .eq("id", jobId)
-      .eq("status", expected)
-      .select()
-      .maybeSingle<JobRow>(),
+  const { set, params } = setClause({ ...patch }, 3);
+  const updated = await maybeOne<JobRow>(
+    `update research_jobs set ${set}, updated_at = now() where id = $1 and status = $2 returning *`,
+    [jobId, expected, ...params],
   );
-  return updated ?? must(await db().from("research_jobs").select().eq("id", jobId).single<JobRow>());
+  return updated ?? loadJob(jobId);
 }

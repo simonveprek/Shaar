@@ -4,7 +4,7 @@ Read this before you change or call the backend. It covers the architecture, req
 route with its request/response shape, the data model, and the rules that keep it working on Netlify.
 
 - Code: `src/app/api/**` (routes), `src/lib/**` (logic), `src/connectors/**` (Apify platforms)
-- DB schema: `supabase/migrations/*.sql`
+- DB schema: `src/lib/db.ts` (local Postgres via PGlite, applied on first open)
 - Apify background reference (actors, pricing, webhooks): `docs/apify-integration.md` on the
   `feature/apify` branch. Where it disagrees with the code, **the code is the source of truth** for
   actor IDs and input fields (they were checked against the actors' published schemas on 2026-10-08).
@@ -27,7 +27,8 @@ Given a person (subject) and their social handles, the backend:
 | --- | --- | --- |
 | Runtime | Next.js 16 (App Router), **API routes only** | Separate app from the frontend. Dev port **4000** (frontend keeps 3000). |
 | Hosting | Netlify | Zero-config Next.js adapter. **Every request must finish in < 60 s.** |
-| DB / auth | Supabase (project `zqwuummnghbpeutvxbif`, "s.veprek@outlook.com's Project") | Shares that project with an unrelated hackathon app. Only touch the 5 projstalker tables. |
+| DB | PGlite (real Postgres in WebAssembly) inside the server, saved to `.data/shaar` | Nothing to install or sign up for. One server process owns it, so it suits localhost, not serverless. |
+| Visitors | Signed httpOnly `shaar_visitor` cookie with a random id (`src/lib/auth.ts`) | No sign-up. Every row is stored under that id. |
 | Scraping | Apify via `apify-client` | Pay-per-event actors, capped per run. |
 | LLM | OpenAI via `openai` (Responses API) | Persona: `gpt-6.1-sol`, chat: `gpt-6-luna` (env-configurable). |
 | Voice | ElevenLabs Agents + TTS over REST (`src/lib/elevenlabs.ts`) | Browser connects with `@elevenlabs/react`. |
@@ -43,7 +44,7 @@ Netlify kills functions at 60 s. Apify runs take minutes, and persona generation
 - Slow work runs **outside** our functions: Apify runs on Apify, persona generation runs in
   **OpenAI background mode** (`background: true`).
 - Our code only **starts** work and **checks** on it. Every step is idempotent and safe to call
-  concurrently. State lives in Supabase, never in memory.
+  concurrently. State lives in the database, never in memory.
 - Three things drive progress: **`GET /api/research/:id` (polling)**, the **Apify webhook**, and the
   **ElevenLabs webhook**. Polling alone is enough locally, where webhooks can't reach you.
 - Concurrency safety comes from conditional updates ("claims"):
@@ -124,8 +125,8 @@ The call UI is `src/components/meet/` (test page `/meet`); full feature docs: `d
 Base URL: `http://localhost:4000` locally, the Netlify site URL in production.
 
 **Auth:** every route except `/api/health`, `/api/connectors*` (GET) and webhooks needs a user, either
-`Authorization: Bearer <Supabase access token>` (a separate frontend with its own sign-in) or this site's
-signed `shaar_visitor` cookie, which `POST /api/discover` and `POST /api/research` create on first use.
+this site's signed `shaar_visitor` cookie, which `POST /api/discover`, `POST /api/research` and
+`POST /api/connectors/:platform` create on first use.
 Users only ever see their own rows.
 
 **Errors** are always JSON `{ "error": string, "details"?: unknown }` with a proper status:
@@ -172,10 +173,7 @@ const res = await fetch(`${API}/api/research/${jobId}`, { headers: { Authorizati
 const { job, runs, persona, itemCounts } = await res.json();
 ```
 
-Or skip polling and subscribe with Supabase Realtime (tables `research_jobs`, `connector_runs`,
-`personas`, `interviews` are published; RLS lets users read their own rows). Note: Realtime only fires on
-changes, and changes only happen when something calls `advanceJob`; in production the webhooks do that,
-locally you still need to poll.
+Polling is also what moves the job forward on localhost, where Apify webhooks cannot reach you.
 
 Starting an interview (`@elevenlabs/react` v1 requires `<ConversationProvider>` around the hooks):
 
@@ -202,11 +200,11 @@ Gate opening → name → "What do we do with them" (Gather intelligence, Read t
 `POST /api/discover` and polling → "Is this them" (the visitor picks the found accounts) →
 `POST /api/research` with the picks and the purpose as notes → `/dossier/<job id>`, which polls
 `GET /api/research/:id/dossier` and fills in as sources finish. Visitors never sign up: on the first
-`POST /api/discover` or `POST /api/research` the server creates a Supabase user for them with the secret
-key and sets a signed httpOnly `shaar_visitor` cookie (`src/lib/auth.ts`). The browser just calls
+`POST /api/discover` or `POST /api/research` the server gives them a random id in a signed httpOnly
+`shaar_visitor` cookie (`src/lib/auth.ts`). The browser just calls
 same-origin routes (`src/lib/client.ts`).
 
-## 7. Data model (Supabase, `public` schema)
+## 7. Data model (local Postgres, `src/lib/db.ts`)
 
 | Table | Key columns |
 | --- | --- |
@@ -217,11 +215,12 @@ same-origin routes (`src/lib/client.ts`).
 | `discoveries` | `name`, `purpose`, `status` (searching/ready/failed), `apify_run_id`, `candidates` (jsonb) |
 | `interviews` | `persona_id`, `elevenlabs_conversation_id` (unique), `status`, `transcript`, `analysis`, `duration_secs`, `difficulty`, `feelings`, `feedback_status`, `feedback_response_id`, `feedback` (jsonb `StoredFeedback`), `feedback_error` |
 
-- RLS: `authenticated` users can **select** their own rows. There are **no insert/update policies**: all
-  writes go through the backend with the secret key (`db()` in `src/lib/supabase.ts`), which bypasses RLS,
-  so **every backend query must filter by `user_id`** (or go through `getJob`/`getPersona`, which do).
-- Schema changes: add a new file in `supabase/migrations/` (never edit an applied one) and apply it to the
-  project. Never touch the hackathon tables (`teams`, `judges`, `submissions`, ...) in the same project.
+- `user_id` is the visitor id. **Every query must filter by `user_id`** (or go through `getJob`/`getPersona`/
+  `getDiscovery`, which do). There is no row-level security to fall back on.
+- Query with `sql`, `one`, `maybeOne` from `src/lib/db.ts`, always with `$1` parameters. Pass objects for
+  jsonb through `json()` with a `::jsonb` cast; `setClause()` builds an UPDATE from a patch.
+- Schema changes: edit `SCHEMA` in `src/lib/db.ts` with `create ... if not exists` / `alter ... add column if
+  not exists`, so existing local databases upgrade on the next start. `rm -rf .data` starts from empty.
 
 ## 8. Code map and conventions
 
@@ -235,7 +234,8 @@ src/
     <platform>.ts         one file per platform
   lib/
     env.ts                zod-validated env, read lazily via env()
-    http.ts               handle() wrapper, HttpError, readJson, must/maybe/check for Supabase results
+    http.ts               handle() wrapper, HttpError, readJson
+    db.ts                 local Postgres (PGlite), schema, sql/one/maybeOne/json/setClause
     auth.ts               requireUser(req) → { id, email }
     research.ts           job lifecycle: createJob, startConnector, syncConnectorRun, advanceJob, generatePersona
     persona.ts            PersonaProfile schema, digest builder, OpenAI start/poll, agent system prompt
@@ -248,7 +248,7 @@ src/
     elevenlabs.ts         REST client, TTS, webhook HMAC verification
     schemas.ts            zod request-body schemas (shared by routes and docs)
     api-catalog.ts        list of every route → GET /api and /docs
-    apify.ts / openai.ts / supabase.ts   lazily created clients
+    apify.ts / openai.ts  lazily created clients
   app/docs/               the /docs page, built with the Fragms kit
   components/ui, components/fragms, components/bits.tsx   Fragms Personal design system (see AGENTS.md, UI)
 ```
@@ -261,8 +261,8 @@ Conventions:
 - **Routes** are `export const GET = handle(async (req, ctx: RouteContext<"/api/...">) => ...)`. Call
   `requireUser(req)` first, validate bodies with `readJson(req, zodSchema)`, throw `HttpError` for
   expected failures. Don't catch and return errors by hand.
-- **Supabase results**: `must(...)` when a row must exist, `maybe(...)` with `.maybeSingle()`,
-  `check(...)` for writes whose result you don't use. Don't destructure `{ data, error }` manually.
+- **Database**: `one(...)` when a row must exist, `maybeOne(...)` when it may not, `sql(...)` for lists and writes.
+- **Keys**: read a service key with `need("KEY", "Feature")`, which answers 503 "Feature is not set up yet" when it is missing.
 - **Env**: add new variables to the schema in `src/lib/env.ts` **and** to `.env.example`. Never read
   `process.env` directly elsewhere (except `src/proxy.ts` and the `NODE_ENV` guard in `/api/dev/*`). Secrets
   never go to the browser. A feature's own key goes through `need("KEY", "Feature")` (503 when unset);
@@ -288,17 +288,19 @@ Every run is capped by `APIFY_MAX_CHARGE_USD_PER_RUN` (default $1).
 
 ## 9. Environment variables
 
-See `.env.example` for the full list. Required: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `APIFY_TOKEN`,
-`APIFY_WEBHOOK_SECRET` (≥16 chars), `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_DEFAULT_VOICE_ID`.
+See `.env.example` for the full list. Nothing is required to start. `APIFY_TOKEN` enables search and
+collection; `OPENAI_API_KEY` the persona and chat; `ELEVENLABS_API_KEY` and `ELEVENLABS_DEFAULT_VOICE_ID`
+the interview and speech. Webhooks need `PUBLIC_API_URL` with `APIFY_WEBHOOK_SECRET` (≥16 chars).
 Production also needs `PUBLIC_API_URL` (turns on Apify webhooks), `ELEVENLABS_WEBHOOK_SECRET`, and
 `CORS_ORIGINS` set to the frontend URL. Missing variables only fail at request time (`env()` is lazy), so
 the build succeeds without them.
 
 ## 10. Known limitations and open work
 
-- **No discovery step yet.** The API needs handles/URLs; it can't go from a person's *name* to their
-  profiles. `docs/apify-integration.md` §5.1 lists candidate actors (Google Search scraper, social-links
-  search). If you add it, require a user-confirmation step before scraping, since name matches are often the wrong person.
+- **Local only.** The database lives in the server process, so this setup is for localhost. Deploying to
+  Netlify needs a hosted Postgres behind the same `sql` helpers.
+- **Discovery is name search only.** One Google search per platform; common names give noisy results, and
+  the visitor must confirm before anything is scraped.
 - **X** needs a paid Apify plan (free plan = demo mode, 10 items). **Facebook** works for pages, not
   personal profiles. **YouTube** channel listings can have relative dates (stored as null).
 - **No caching** of scrapes across jobs yet: researching the same handle twice pays twice.

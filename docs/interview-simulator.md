@@ -83,7 +83,7 @@ Profil kandidáta ─► Lobby „Ready to join?“ ─► Hovor ─► Zavěše
 │  ensureAgent → token        feedback (background)  │webhook │  Agents     │
 └──┬──────────────┼───────────────────────┬──────────┘        └──────▲──────┘
    │              └───────────────────────┼──────────────────────────┘
-   │ Supabase (personas, interviews)      │ OpenAI Responses API (background mode)
+   │ lokální Postgres (personas, interviews)      │ OpenAI Responses API (background mode)
 ```
 
 ### Klíčová pravidla
@@ -310,7 +310,7 @@ Pokud HR za celý hovor nepromluvil, stav je `failed` s chybou „The interviewe
 
 ## 8. API
 
-Všechny routy kromě webhooků a `/api/dev/*` vyžadují uživatele. Prohlížeč se prokazuje visitor cookie (volání přes `api()` ze `src/lib/client.ts`), oddělený klient `Authorization: Bearer <Supabase token>`. Úplný a vždy aktuální přehled je na `GET /api` a `/docs`.
+Všechny routy kromě webhooků a `/api/dev/*` vyžadují uživatele. Prohlížeč se prokazuje visitor cookie (volání přes `api()` ze `src/lib/client.ts`). Úplný a vždy aktuální přehled je na `GET /api` a `/docs`.
 
 | Metoda | Cesta | Popis |
 |---|---|---|
@@ -338,7 +338,7 @@ Chyby mají tvar `{ error, details? }`:
 
 ## 9. Datový model
 
-Migrace: `supabase/migrations/20261009000000_interview_simulator.sql`
+Schéma: `SCHEMA` v `src/lib/db.ts` (sloupce se přidají samy při startu)
 
 | Tabulka.sloupec | Typ | Popis |
 |---|---|---|
@@ -371,7 +371,7 @@ Od nejlevnějšího k úplnému:
 | **+ hodnocení po hovoru** | stejná URL s `&fixture=alex-novak` (skript ji vypíše) | + `OPENAI_API_KEY` |
 | Přepis posledního hovoru | `npm run try:agent -- alex-novak --transcript` | ElevenLabs klíč |
 | Test na stránce ElevenLabs | `npm run try:agent -- alex-novak` (bez `--feelings`) | ElevenLabs klíč |
-| Celý produkční průchod | migrace → seed → frontend se Supabase tokenem | vše |
+| Celý průchod | `npm run dev` → `/api/dev/seed-candidates` v prohlížeči → frontend přes visitor cookie | vše |
 
 ### Testovací agent (`scripts/try-agent.ts`)
 
@@ -468,9 +468,9 @@ src/components/meet/
 src/app/meet/         testovací stránka (/meet?agent=…&fixture=…)
 fixtures/candidates/  3 fiktivní kandidáti
 scripts/
-  seed-candidates.ts  nahrání fixtures do Supabase
+  seed-candidates.ts  kontrola fixtures (nahrání: /api/dev/seed-candidates)
   try-agent.ts        testovací agent v ElevenLabs
-supabase/migrations/20261009000000_interview_simulator.sql
+src/lib/fixtures.ts  nahrání fixtures do lokální databáze
 docs/
   interview-simulator.md        tento dokument
   interview-integration.md      nasazení a napojení
