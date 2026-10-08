@@ -114,7 +114,7 @@ Users only ever see their own rows.
 | Method & route | Body / query | Response |
 | --- | --- | --- |
 | `GET /api` | | Machine-readable index of every route (method, path, auth, body fields + example, response example) |
-| `GET /docs` (page) | | Human docs: every route with curl examples. `/` redirects here |
+| `GET /docs` (page) | | Human docs: every route with curl examples |
 | `GET /api/health` | | `{ ok, time }` |
 | `GET /api/connectors` | | `{ connectors: [{ platform, label, targetHint, notes, actors: [{ actorId, role }] }] }` |
 | `GET /api/connectors/:platform` | | `{ connector }` |
