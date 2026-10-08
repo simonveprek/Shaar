@@ -231,6 +231,30 @@ export const routes: RouteDoc[] = [
     },
   },
   {
+    method: "GET",
+    path: "/api/research/:id/dossier",
+    group: "Research",
+    summary: "The watcher's file",
+    description:
+      "What a watcher could put together from the job's public data. Where they are, when they post (UTC), how much, who they mention, their most seen posts and an exposure score out of 100. It describes exposure only and never scores the person. The `/dossier/sample` page shows it for a fictional subject.",
+    auth: "user",
+    params: { id: "Job ID" },
+    response: {
+      status: 200,
+      example: {
+        jobStatus: "ready",
+        dossier: {
+          fileNumber: "0417-K",
+          subject: { name: "Mara Vell", oneLine: "Film photographer in Prague…" },
+          totals: { items: 214, posts: 210, platforms: 4, reach: 7070, yearsVisible: 3.1 },
+          routine: { peak: { day: 1, hour: 20, count: 9 }, busiestHours: [20, 21, 10] },
+          exposure: { score: 78, factors: [{ label: "Volume", detail: "210 public posts", value: 27 }] },
+          "…": "presence, activity, topics, circle, quotes, views",
+        },
+      },
+    },
+  },
+  {
     method: "POST",
     path: "/api/research/:id/persona",
     group: "Research",

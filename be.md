@@ -124,6 +124,7 @@ Users only ever see their own rows.
 | `GET /api/research/:id` | | `{ job, runs, persona, itemCounts: { [platform]: { profile?, post?, comment? } } }`; **also advances the job** |
 | `DELETE /api/research/:id` | | 204; deletes all data + the ElevenLabs agent |
 | `GET /api/research/:id/items` | `?platform=&kind=profile\|post\|comment&limit=(≤200)&offset=&raw=1` | `{ items, total, limit, offset }` |
+| `GET /api/research/:id/dossier` | | `{ dossier, jobStatus }`: the watcher's file (presence, routine heatmap in UTC, activity per month, circle, top posts, stated views, exposure 0-100). Exposure only, never a judgement. Rendered by `src/app/dossier/dossier-view.tsx`; `/dossier/sample` shows a fictional subject |
 | `POST /api/research/:id/persona` | | 202 `{ persona }` (regenerate; 409 while scraping) |
 | `GET /api/personas/:id` | | `{ persona }` (`persona.profile` is a `PersonaProfile`, see `src/lib/persona.ts`) |
 | `POST /api/personas/:id/interviews` | `{ voiceId?, transport?: "webrtc" (default) \| "websocket" }` | 201 `{ interview, agentId, session: { conversationToken } \| { signedUrl } }` (409 if persona not ready) |
@@ -203,6 +204,8 @@ src/
     research.ts           job lifecycle: createJob, startConnector, syncConnectorRun, advanceJob, generatePersona
     persona.ts            PersonaProfile schema, digest builder, OpenAI start/poll, agent system prompt
     interviews.ts         ensureAgent, startInterview, syncInterview
+    dossier.ts            buildDossier: research data to the watcher's file (pure, no I/O)
+    dossier-sample.ts     a fictional subject for /dossier/sample
     elevenlabs.ts         REST client, TTS, webhook HMAC verification
     schemas.ts            zod request-body schemas (shared by routes and docs)
     api-catalog.ts        list of every route → GET /api and /docs
