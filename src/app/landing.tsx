@@ -2,38 +2,52 @@
 
 import { AnimatePresence, motion, useReducedMotion, type TargetAndTransition } from "framer-motion";
 import { Fragment, useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
+import { ArrowRight01Icon, CornerDownLeftIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { Aura, type AuraColors } from "@/components/fragms";
-import { Logo } from "@/components/logo";
-import { CornerDownLeftIcon } from "@hugeicons/core-free-icons";
-import { cx, EASE, Icon, Kbd } from "@/components/ui";
+import { GATE, Logo } from "@/components/logo";
+import { Card, CardBody, CardStage, cx, EASE, Icon, Kbd } from "@/components/ui";
 
 /*
- * Shaar. The gate. Black, one question, and light coming from under the
- * door. Something trails the pointer across a grid it only lets you see
+ * Shaar. The gate. Black, one thing at a time, and light coming from under
+ * the door. Something trails the pointer across a grid it only lets you see
  * where it looks. Beware the Spectator.
  *
- * Timeline on arrival, in seconds:
- *   0.0  the light under the gate rises
- *   0.5  the mark comes into focus
- *   0.8  the question rises word by word
- *   1.6  the motto
- * On a name: it stays where it was typed, the field locks, and after a beat
- * it is confirmed and the light answers.
+ * The opening, on every load, in seconds. Any key or click skips it.
+ *   0.00  the light under the gate rises
+ *   0.15  the gate draws itself as a hairline
+ *   1.45  it fills in, the line falls away
+ *   2.10  the motto
+ *   3.30  gate and motto take their corners, the question rises
+ *
+ * Then: who are we looking for. The name is confirmed where it was typed and
+ * the light answers. Then three cards ask what it is for.
  */
 
 /** Cold greys, never pure white, so the light reads as a screen left on in an empty room. */
 const ASH: AuraColors = ["#c8c8cc", "#5c5c63", "#9a9aa1", "#3a3a40"];
 
 const QUESTION = "Who are we looking for?";
+
+const PURPOSES = [
+  { id: "prepare", title: "Prepare", line: "Rehearse the conversation before it happens." },
+  { id: "vet", title: "Vet", line: "Know who you are dealing with before you sign." },
+  { id: "understand", title: "Understand", line: "See the person behind what they post." },
+] as const;
+type Purpose = (typeof PURPOSES)[number]["id"];
+
+const OPENING = { draw: 0.15, fill: 1.45, motto: 2.1, hold: 3.3 };
+
+/** After a name is confirmed, how long before the cards ask what it is for. */
+const CARDS_AFTER = 1.5;
+
 const RESTING = 0.22;
 
 /** How hard each keystroke and each bit of pointer travel stirs the light, and how fast it settles. */
-const STIR = { key: 0.14, pointer: 0.00035, max: 0.45, settle: 2.2 };
+const STIR = { key: 0.14, card: 0.08, choose: 0.3, pointer: 0.00035, max: 0.45, settle: 2.2 };
 
 /** Three slow waves out of phase, so the light swells and ebbs without ever repeating. 0 to 1. */
 const think = (t: number) =>
   0.5 + 0.5 * (0.5 * Math.sin(t * 0.9) + 0.3 * Math.sin(t * 1.7 + 1.3) + 0.2 * Math.sin(t * 2.9 + 0.4));
-const AT = { light: 0, mark: 0.5, question: 0.8, motto: 1.6 };
 
 /** How quickly the Spectator's gaze catches the pointer. Lower trails further behind. */
 const GAZE = 4.5;
@@ -42,30 +56,43 @@ const GRID =
   "[background-image:linear-gradient(to_right,color-mix(in_oklab,var(--foreground)_14%,transparent)_1px,transparent_1px),linear-gradient(to_bottom,color-mix(in_oklab,var(--foreground)_14%,transparent)_1px,transparent_1px)] [background-size:56px_56px] [background-position:center_center]";
 
 const TYPE = "text-[clamp(1.5rem,5vw,3.5rem)] leading-none font-medium tracking-[-0.04em]";
+const CAPTION = "text-[11px] font-medium tracking-[0.22em] text-muted uppercase";
 
 const dissolve = { opacity: 0, filter: "blur(8px)", transition: { duration: 0.15, ease: EASE } };
 
+type Stage = "opening" | "name" | "confirmed" | "purpose";
+
 export function Landing() {
   const reduce = useReducedMotion() ?? false;
-  const [name, setName] = useState("");
-  const [sent, setSent] = useState<string | null>(null);
+  const [stage, setStage] = useState<Stage>("opening");
+  // The opening played, so the gate and motto travel to their corners instead of fading in.
+  const opened = !reduce;
+  const [subject, setSubject] = useState("");
+  const [purpose, setPurpose] = useState<Purpose | null>(null);
+
   const grid = useRef<HTMLDivElement>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const mountedAt = useRef<number | null>(null);
-  const sentAt = useRef(-Infinity);
-  // What the user is doing to the light right now. Rises on input, settles on its own.
+  const confirmedAt = useRef(-Infinity);
+  // What the visitor is doing to the light right now. Rises on input, settles on its own.
   const stir = useRef({ energy: 0, at: 0, last: null as { x: number; y: number } | null });
   const stirBy = (amount: number) => {
     stir.current.energy = Math.min(STIR.max, stir.current.energy + amount);
   };
-  // The question rises word by word once. Coming back after a cleared field, it only fades in.
-  const [arrived, setArrived] = useState(false);
 
+  // The opening plays on every load. With reduced motion it is skipped straight away.
   useEffect(() => {
     mountedAt.current = performance.now();
-    const id = setTimeout(() => setArrived(true), (AT.question + 1.2) * 1000);
+    const id = setTimeout(() => setStage((s) => (s === "opening" ? "name" : s)), reduce ? 0 : OPENING.hold * 1000);
     return () => clearTimeout(id);
-  }, []);
+  }, [reduce]);
+
+  // A beat after the name is confirmed, the cards ask what it is for.
+  useEffect(() => {
+    if (stage !== "confirmed") return;
+    const id = setTimeout(() => setStage("purpose"), reduce ? 0 : CARDS_AFTER * 1000);
+    return () => clearTimeout(id);
+  }, [stage, reduce]);
 
   // The Spectator's gaze. Eases toward the pointer every frame, so it always arrives a beat late.
   useEffect(() => {
@@ -97,7 +124,7 @@ export function Landing() {
     const now = performance.now();
     const since = mountedAt.current === null ? 0 : (now - mountedAt.current) / 1000;
     const rise = reduce ? 1 : 1 - Math.pow(1 - Math.min(1, since / 1.8), 3);
-    const flare = 0.65 - (now - sentAt.current) / 3200;
+    const flare = 0.65 - (now - confirmedAt.current) / 3200;
     if (reduce) return Math.max(RESTING, flare);
 
     const state = stir.current;
@@ -105,9 +132,10 @@ export function Landing() {
     state.at = now;
     state.energy *= Math.exp(-STIR.settle * dt);
 
+    const searching = stage === "confirmed" || stage === "purpose";
     const t = now / 1000;
-    const mind = sent ? think(t * 1.6) : think(t);
-    const drift = RESTING * (0.7 + 0.6 * mind) + (sent ? 0.1 * mind : 0);
+    const mind = searching ? think(t * 1.6) : think(t);
+    const drift = RESTING * (0.7 + 0.6 * mind) + (searching ? 0.1 * mind : 0);
     return Math.max(rise * drift + state.energy, flare);
   };
 
@@ -125,28 +153,53 @@ export function Landing() {
     if (grid.current) delete grid.current.dataset.on;
   };
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const subject = name.trim();
-    if (!subject) return;
-    setSent(subject);
+  const skipOpening = () => setStage((s) => (s === "opening" ? "name" : s));
+
+  const answer = (value: string) => {
+    setSubject(value);
+    setStage("confirmed");
+  };
+
+  const choose = (id: Purpose) => {
+    setPurpose(id);
+    stirBy(STIR.choose);
   };
 
   const reset = () => {
-    setSent(null);
-    setName("");
+    setSubject("");
+    setPurpose(null);
+    setStage("name");
   };
 
-  // Entrances. With reduced motion everything is simply there.
-  const enter = (delay: number, from: TargetAndTransition = { opacity: 0, filter: "blur(8px)" }) =>
-    reduce
-      ? { initial: false as const }
+  // Keys work wherever focus is. Once the field is gone, focus sits on the page, not inside it.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (stage === "opening") return setStage("name");
+      if (event.key === "Escape" && (stage === "confirmed" || stage === "purpose")) {
+        setSubject("");
+        setPurpose(null);
+        return setStage("name");
+      }
+      const card = PURPOSES[Number(event.key) - 1];
+      if (stage === "purpose" && card) {
+        setPurpose(card.id);
+        stir.current.energy = Math.min(STIR.max, stir.current.energy + STIR.choose);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stage]);
+
+  // The gate and motto in their corners. After the opening they travel there; otherwise they fade in.
+  const corner = (delay: number, from: TargetAndTransition) =>
+    opened || reduce
+      ? { transition: { layout: { duration: 1.1, ease: EASE } } }
       : { initial: from, animate: { opacity: 1, filter: "blur(0px)", y: 0 }, transition: { duration: 1.1, ease: EASE, delay } };
 
   return (
     <main
-      className="dark relative grid min-h-svh place-items-center overflow-hidden bg-background px-6 text-foreground selection:bg-foreground selection:text-background"
-      onKeyDown={(event) => event.key === "Escape" && sent && reset()}
+      className="dark relative grid min-h-svh place-items-center overflow-x-clip bg-background px-6 py-20 sm:py-24 text-foreground selection:bg-foreground selection:text-background"
+      onPointerDown={() => stage === "opening" && skipOpening()}
       onPointerMove={look}
       onPointerLeave={lookAway}
     >
@@ -167,84 +220,180 @@ export function Landing() {
         className="pointer-events-none absolute -right-[15%] bottom-0 -left-[15%] h-[60svh] [mask-image:linear-gradient(to_top,black_0%,black_15%,transparent_70%)]"
         {...(reduce
           ? {}
-          : {
-              initial: { opacity: 0, y: "10%" },
-              animate: { opacity: 1, y: 0 },
-              transition: { duration: 1.8, ease: EASE, delay: AT.light },
-            })}
+          : { initial: { opacity: 0, y: "10%" }, animate: { opacity: 1, y: 0 }, transition: { duration: 1.8, ease: EASE } })}
       >
-        <Aura palette={ASH} level={level} intensity={1.5} speed={reduce ? 0 : sent ? 1.1 : 0.6} radius={0} className="h-full w-full" />
+        <Aura
+          palette={ASH}
+          level={level}
+          intensity={1.5}
+          speed={reduce ? 0 : stage === "confirmed" || stage === "purpose" ? 1.1 : 0.6}
+          radius={0}
+          className="h-full w-full"
+        />
       </motion.div>
 
-      <motion.div className="absolute top-6 left-6 sm:top-8 sm:left-8" {...enter(AT.mark, { opacity: 0, filter: "blur(10px)", y: 6 })}>
-        <Logo className="h-7 w-auto" />
-      </motion.div>
+      {stage === "opening" && (
+        // The title. The gate draws itself in the middle, the motto under it. Both travel to their corners after.
+        <div className="relative flex flex-col items-center gap-8" role="img" aria-label="Shaar. Beware the Spectator.">
+          <motion.div layoutId="mark" className="text-foreground">
+            <DrawnGate className="h-20 w-auto sm:h-24" />
+          </motion.div>
+          <motion.p
+            layoutId="motto"
+            className={CAPTION}
+            initial={{ opacity: 0, filter: "blur(6px)" }}
+            animate={{ opacity: 1, filter: "blur(0px)" }}
+            transition={{ duration: 0.9, ease: EASE, delay: OPENING.motto }}
+          >
+            Beware the Spectator
+          </motion.p>
+        </div>
+      )}
 
-      <motion.p
-        className="absolute top-6 right-6 flex h-7 items-center text-[11px] font-medium tracking-[0.22em] text-muted uppercase sm:top-8 sm:right-8"
-        {...enter(AT.motto)}
-      >
-        Beware the Spectator
-      </motion.p>
+      {stage !== "opening" && (
+        <>
+          <motion.div
+            layoutId="mark"
+            className="absolute top-6 left-6 sm:top-8 sm:left-8"
+            {...corner(0.5, { opacity: 0, filter: "blur(10px)", y: 6 })}
+          >
+            <Logo className="h-7 w-auto" />
+          </motion.div>
+          <motion.p
+            layoutId="motto"
+            className={cx("absolute top-6 right-6 flex h-7 items-center sm:top-8 sm:right-8", CAPTION)}
+            {...corner(1.6, { opacity: 0, filter: "blur(8px)" })}
+          >
+            Beware the Spectator
+          </motion.p>
 
-      {/* The typed name never leaves. On Enter the field locks in place and is confirmed where it stands. */}
-      <div className="relative grid w-full max-w-[920px] place-items-center">
-        {sent ? (
-          <Subject name={sent} reduce={reduce} onConfirmed={() => (sentAt.current = performance.now())} onReset={reset} />
-        ) : (
-          <form onSubmit={submit} className="relative col-start-1 row-start-1 grid w-full place-items-center">
-            <label htmlFor="subject" className="sr-only">
-              {QUESTION}
-            </label>
-            <input
-              id="subject"
-              name="subject"
-              autoFocus
-              autoComplete="off"
-              spellCheck={false}
-              enterKeyHint="search"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                stirBy(STIR.key);
-              }}
-              className={cx(
-                "col-start-1 row-start-1 w-full bg-transparent text-center outline-none focus-visible:outline-none",
-                TYPE,
-                name ? "caret-foreground" : "caret-transparent",
-              )}
-            />
-            <AnimatePresence>{!name && <Question key="question" first={!arrived} reduce={reduce} />}</AnimatePresence>
-            {/* The return key, so it is clear a name is sent with Enter. Also a tap target on phones. */}
-            <AnimatePresence>
-              {name.trim() && (
-                <motion.button
-                  key="enter"
-                  type="submit"
-                  aria-label="Enter to confirm"
-                  className="group absolute top-full left-1/2 mt-5 flex -translate-x-1/2 cursor-pointer items-center gap-2.5 p-2 whitespace-nowrap"
-                  initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
-                  animate={{ opacity: 1, filter: "blur(0px)", transition: { duration: 0.25, ease: EASE } }}
-                  exit={dissolve}
-                >
-                  <Kbd className="h-7 min-w-7 rounded-item px-2 transition-colors duration-150 group-hover:bg-control-hover group-hover:text-foreground">
-                    <Icon icon={CornerDownLeftIcon} size={14} />
-                  </Kbd>
-                  <span className="text-[11px] font-medium tracking-[0.22em] text-muted uppercase transition-colors duration-150 group-hover:text-foreground">
-                    Enter to confirm
-                  </span>
-                </motion.button>
-              )}
-            </AnimatePresence>
-          </form>
-        )}
-      </div>
+          <div className="relative flex w-full max-w-[920px] flex-col items-center">
+            {stage === "name" ? (
+              <Ask key="name" delay={opened ? 0.7 : 0.8} reduce={reduce} onType={() => stirBy(STIR.key)} onAnswer={answer} />
+            ) : (
+              <>
+                {/* The name never leaves. It was confirmed where it was typed and only glides up for the cards. */}
+                <motion.div layout="position" transition={{ duration: 0.9, ease: EASE }} className="flex max-w-full flex-col items-center">
+                  <Subject name={subject} reduce={reduce} onConfirmed={() => (confirmedAt.current = performance.now())} onReset={reset} />
+                  <Caption text={stage === "purpose" ? "What is this for" : "Confirmed"} reduce={reduce} />
+                </motion.div>
+
+                <AnimatePresence>
+                  {stage === "purpose" && (
+                    <Cards reduce={reduce} chosen={purpose} onChoose={choose} onHover={() => stirBy(STIR.card)} />
+                  )}
+                </AnimatePresence>
+              </>
+            )}
+          </div>
+        </>
+      )}
     </main>
   );
 }
 
+/** The gate drawing itself. A hairline traces every arch, then the shape fills and the line falls away. */
+function DrawnGate({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox={GATE.viewBox} className={className} aria-hidden="true">
+      <motion.path
+        d={GATE.d}
+        fill="currentColor"
+        fillRule="evenodd"
+        stroke="currentColor"
+        strokeWidth={1}
+        vectorEffect="non-scaling-stroke"
+        initial={{ pathLength: 0, fillOpacity: 0, strokeOpacity: 0.85 }}
+        animate={{ pathLength: 1, fillOpacity: 1, strokeOpacity: 0 }}
+        transition={{
+          pathLength: { duration: 1.6, ease: [0.65, 0, 0.35, 1], delay: OPENING.draw },
+          fillOpacity: { duration: 0.9, ease: EASE, delay: OPENING.fill },
+          strokeOpacity: { duration: 0.6, ease: EASE, delay: OPENING.fill + 0.45 },
+        }}
+      />
+    </svg>
+  );
+}
+
+/**
+ * The question and its field. The question rises word by word when it first
+ * appears, dissolves on the first key, and the return key shows once there is
+ * an answer. On Enter the answer locks where it was typed.
+ */
+function Ask({
+  delay,
+  reduce,
+  onType,
+  onAnswer,
+}: {
+  delay: number;
+  reduce: boolean;
+  onType: () => void;
+  onAnswer: (value: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  // The question rises word by word once. Coming back after a cleared field, it only fades in.
+  const [risen, setRisen] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setRisen(true), (delay + 1.2) * 1000);
+    return () => clearTimeout(timer);
+  }, [delay]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const answer = value.trim();
+    if (answer) onAnswer(answer);
+  };
+
+  return (
+    <form onSubmit={submit} className="relative grid w-full place-items-center">
+      <label htmlFor="subject" className="sr-only">
+        {QUESTION}
+      </label>
+      <input
+        id="subject"
+        name="subject"
+        autoFocus
+        autoComplete="off"
+        spellCheck={false}
+        enterKeyHint="go"
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onType();
+        }}
+        className={cx(
+          "col-start-1 row-start-1 w-full bg-transparent text-center outline-none focus-visible:outline-none",
+          TYPE,
+          value ? "caret-foreground" : "caret-transparent",
+        )}
+      />
+      <AnimatePresence>{!value && <Question key="question" first={!risen} delay={delay} reduce={reduce} />}</AnimatePresence>
+      {/* The return key, so it is clear the name is sent with Enter. Also a tap target on phones. */}
+      <AnimatePresence>
+        {value.trim() && (
+          <motion.button
+            key="enter"
+            type="submit"
+            aria-label="Enter to confirm"
+            className="group absolute top-full left-1/2 mt-5 flex -translate-x-1/2 cursor-pointer items-center gap-2.5 p-2 whitespace-nowrap"
+            initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
+            animate={{ opacity: 1, filter: "blur(0px)", transition: { duration: 0.25, ease: EASE } }}
+            exit={dissolve}
+          >
+            <Kbd className="h-7 min-w-7 rounded-item px-2 transition-colors duration-150 group-hover:bg-control-hover group-hover:text-foreground">
+              <Icon icon={CornerDownLeftIcon} size={14} />
+            </Kbd>
+            <span className={cx(CAPTION, "transition-colors duration-150 group-hover:text-foreground")}>Enter to confirm</span>
+          </motion.button>
+        )}
+      </AnimatePresence>
+    </form>
+  );
+}
+
 /** The question, drawn over the empty field. Rises word by word on arrival, dissolves on the first key. */
-function Question({ first, reduce }: { first: boolean; reduce: boolean }) {
+function Question({ first, delay, reduce }: { first: boolean; delay: number; reduce: boolean }) {
   const words = QUESTION.split(" ");
   const rise = first && !reduce;
   return (
@@ -263,7 +412,7 @@ function Question({ first, reduce }: { first: boolean; reduce: boolean }) {
               className="inline-block"
               initial={rise ? { y: "110%", rotate: 4 } : false}
               animate={{ y: "0%", rotate: 0 }}
-              transition={{ duration: 0.9, ease: EASE, delay: AT.question + i * 0.07 }}
+              transition={{ duration: 0.9, ease: EASE, delay: delay + i * 0.07 }}
             >
               {word}
             </motion.span>
@@ -278,7 +427,7 @@ function Question({ first, reduce }: { first: boolean; reduce: boolean }) {
         transition={
           reduce
             ? undefined
-            : { duration: 1.1, times: [0, 0.01, 0.5, 0.51, 1], repeat: Infinity, delay: rise ? AT.question + 0.9 : 0 }
+            : { duration: 1.1, times: [0, 0.01, 0.5, 0.51, 1], repeat: Infinity, delay: rise ? delay + 0.9 : 0 }
         }
       />
     </motion.p>
@@ -287,7 +436,7 @@ function Question({ first, reduce }: { first: boolean; reduce: boolean }) {
 
 /**
  * The name, confirmed where it was typed. It does not move or change. After a
- * beat "Confirmed" settles underneath, the light answers and a slow shimmer starts.
+ * beat the light answers and a slow shimmer starts.
  */
 function Subject({
   name,
@@ -321,20 +470,168 @@ function Subject({
       onClick={onReset}
       title="Someone else"
       aria-label={`${name}, confirmed`}
-      className="relative col-start-1 row-start-1 max-w-full cursor-pointer"
+      className="max-w-full cursor-pointer"
     >
       {/* Same type and centring as the field, so the swap from input to text cannot be seen. */}
       <span aria-hidden="true" className={cx("block truncate text-center", TYPE, confirmed && "shimmer")}>
         {name}
       </span>
-      <motion.span
-        className="absolute top-full left-1/2 mt-7 -translate-x-1/2 text-[11px] font-medium tracking-[0.22em] whitespace-nowrap text-muted uppercase"
-        initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
-        animate={confirmed ? { opacity: 1, filter: "blur(0px)" } : undefined}
-        transition={{ duration: 0.6, ease: EASE }}
-      >
-        Confirmed
-      </motion.span>
     </button>
+  );
+}
+
+/** The one line under the name. It reads Confirmed, then turns into the question the cards answer. */
+function Caption({ text, reduce }: { text: string; reduce: boolean }) {
+  return (
+    <div className="relative mt-7 h-4">
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.p
+          key={text}
+          className={cx("whitespace-nowrap", CAPTION)}
+          initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
+          animate={{ opacity: 1, filter: "blur(0px)" }}
+          exit={dissolve}
+          transition={{ duration: 0.6, ease: EASE, delay: text === "Confirmed" && !reduce ? 0.35 : 0 }}
+        >
+          {text}
+        </motion.p>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/** Three ways to use Shaar, as Fragms cards: a frame, a stage that shows the idea, and its name underneath. */
+function Cards({
+  reduce,
+  chosen,
+  onChoose,
+  onHover,
+}: {
+  reduce: boolean;
+  chosen: Purpose | null;
+  onChoose: (id: Purpose) => void;
+  onHover: () => void;
+}) {
+  const [hovered, setHovered] = useState<Purpose | null>(null);
+  return (
+    <motion.div
+      role="radiogroup"
+      aria-label="What is this for"
+      className="mt-10 grid w-full max-w-[880px] gap-3 sm:grid-cols-3 sm:gap-4"
+      initial={reduce ? false : "hidden"}
+      animate="show"
+      exit={dissolve}
+      variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08, delayChildren: 0.25 } } }}
+    >
+      {PURPOSES.map((card) => {
+        const active = chosen === card.id;
+        const dimmed = chosen !== null && !active;
+        const live = !reduce && (active || hovered === card.id);
+        return (
+          <motion.button
+            key={card.id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChoose(card.id)}
+            onPointerEnter={() => {
+              setHovered(card.id);
+              onHover();
+            }}
+            onPointerLeave={() => setHovered(null)}
+            variants={{
+              hidden: { opacity: 0, y: 18, filter: "blur(6px)" },
+              show: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: 0.7, ease: EASE } },
+            }}
+            className="cursor-pointer rounded-card text-left"
+          >
+            <Card
+              className={cx(
+                "h-full transition-[background-color,border-color,opacity,transform] duration-150 ease-out hover:bg-card-hover active:scale-[0.99]",
+                active && "border-foreground/30 bg-card-hover",
+                // The entrance animation owns the button's opacity, so the fade back lives on the card itself.
+                dimmed && "opacity-45 hover:opacity-85",
+              )}
+            >
+              <CardStage className="h-20 sm:h-auto sm:aspect-[4/3]">
+                <Motif id={card.id} live={live} />
+              </CardStage>
+              <CardBody
+                title={card.title}
+                description={card.line}
+                action={
+                  <Icon
+                    icon={active ? Tick02Icon : ArrowRight01Icon}
+                    size={16}
+                    className={cx(
+                      "mr-1 shrink-0 transition-[color,transform] duration-250 ease-smooth",
+                      active ? "text-foreground" : "text-muted group-hover/card:translate-x-0.5",
+                    )}
+                  />
+                }
+              />
+            </Card>
+          </motion.button>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+/** What each card's stage shows. Still at rest, alive while hovered or chosen. Monochrome, like the rest. */
+function Motif({ id, live }: { id: Purpose; live: boolean }) {
+  if (id === "prepare") {
+    // A voice. Thin bars that start to speak.
+    const bars = [0.35, 0.6, 0.45, 0.8, 0.55, 1, 0.7, 0.4, 0.85, 0.5, 0.65, 0.3];
+    return (
+      <div className="flex h-12 items-center gap-[5px]" aria-hidden="true">
+        {bars.map((h, i) => (
+          <motion.span
+            key={i}
+            className="h-full w-[3px] origin-center rounded-full bg-foreground/45"
+            initial={false}
+            animate={live ? { scaleY: [h * 0.5, h, h * 0.35, h * 0.8, h * 0.5] } : { scaleY: h * 0.5 }}
+            transition={
+              live
+                ? { duration: 1.2 + (i % 4) * 0.15, repeat: Infinity, ease: "easeInOut", delay: i * 0.04 }
+                : { duration: 0.4, ease: EASE }
+            }
+          />
+        ))}
+      </div>
+    );
+  }
+  if (id === "vet") {
+    // The Spectator looking. A fine grid and a focus ring that tightens on its subject.
+    return (
+      <div className="absolute inset-0 grid place-items-center" aria-hidden="true">
+        <div
+          className="absolute inset-0 opacity-60 [background-image:linear-gradient(to_right,color-mix(in_oklab,var(--foreground)_10%,transparent)_1px,transparent_1px),linear-gradient(to_bottom,color-mix(in_oklab,var(--foreground)_10%,transparent)_1px,transparent_1px)] [background-position:center_center] [background-size:18px_18px] [mask-image:radial-gradient(closest-side,black,transparent)]"
+        />
+        <motion.span
+          className="relative size-14 rounded-full border border-foreground/40"
+          initial={false}
+          animate={live ? { scale: [1.25, 0.9, 1], opacity: 1 } : { scale: 1.25, opacity: 0.6 }}
+          transition={{ duration: 0.9, ease: EASE }}
+        />
+        <span className="absolute size-1.5 rounded-full bg-foreground/70" />
+      </div>
+    );
+  }
+  // Reading what they post. Lines of text, a highlight reading down through them.
+  const lines = ["78%", "92%", "60%", "86%", "70%"];
+  return (
+    <div className="flex w-[62%] flex-col gap-2.5" aria-hidden="true">
+      {lines.map((w, i) => (
+        <motion.span
+          key={i}
+          className="h-1.5 rounded-full bg-foreground"
+          style={{ width: w }}
+          initial={false}
+          animate={live ? { opacity: [0.14, 0.6, 0.14, 0.14] } : { opacity: 0.14 }}
+          transition={live ? { duration: 2, repeat: Infinity, delay: i * 0.4, times: [0, 0.2, 0.4, 1] } : { duration: 0.3 }}
+        />
+      ))}
+    </div>
   );
 }
