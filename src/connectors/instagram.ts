@@ -31,6 +31,8 @@ export const instagram: Connector = {
             }),
             media: mediaUrls(raw, "profilePicUrlHD", "profilePicUrl"),
             links: linksFrom(raw, "externalUrl", "externalUrls"),
+            // A private account shows no posts to anyone outside it, so the file says so instead of zero posts.
+            details: { private: raw.private === true, name: str(raw, "fullName") },
           }),
         ];
       },

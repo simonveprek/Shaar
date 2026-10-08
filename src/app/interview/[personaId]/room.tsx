@@ -71,6 +71,14 @@ export function InterviewRoom() {
         subtitle: persona.candidate?.target_role ?? persona.profile.one_line_summary,
       }}
       you="Spectator"
+      // A real person's persona is labelled for what it is: a simulation of them, never the person.
+      kind={isCandidate ? undefined : "Simulation"}
+      disclaimer={
+        isCandidate
+          ? undefined
+          : `This is not ${persona.profile.display_name}. It is an AI simulation that speaks as them, built only from what they made public.`
+      }
+      askDifficulty={isCandidate}
       connect={async (difficulty) => {
         const { interview, session } = await api<{ interview: { id: string }; session: HookOptions }>(
           `/api/personas/${persona.id}/interviews`,

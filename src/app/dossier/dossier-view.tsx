@@ -19,9 +19,19 @@ const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const month = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString("en", { month: "short", year: "numeric", timeZone: "UTC" }) : "never";
 const day = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "";
+  iso
+    ? new Date(iso).toLocaleDateString("en", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+    : "";
 const hour = (h: number) => `${String(h).padStart(2, "0")}:00`;
 const compact = (n: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+
+/** The first three sentences. Past those, the persona's summary turns to notes on what its data lacked. */
+const lede = (text: string) =>
+  text
+    // A sentence ends at a stop followed by a space and a capital, so Next.js and 3.5 stay whole.
+    .split(/(?<=[.!?])\s+(?=\p{Lu})/u)
+    .slice(0, 3)
+    .join(" ");
 
 /** Counts up to a number once, on the kit's curve. */
 function useCount(target: number, decimals = 0) {
@@ -73,7 +83,8 @@ export function DossierView({
   interview,
 }: {
   dossier: Dossier;
-  sample?: boolean;
+  /** A demo file: true for the fictional sample, or a caption saying what is staged. */
+  sample?: boolean | string;
   /** A line in the header while the file is still being put together. */
   status?: ReactNode;
   /** The way into a simulated interview with their persona: a link once it is ready, or a note until then. */
@@ -81,9 +92,8 @@ export function DossierView({
 }) {
   const { totals, exposure } = dossier;
   const posts = useCount(totals.posts);
-  const platforms = useCount(totals.platforms);
+  const accounts = useCount(dossier.presence.length);
   const years = useCount(totals.yearsVisible, 1);
-  const score = useCount(exposure.score);
 
   return (
     <main className="dark min-h-svh bg-background text-foreground selection:bg-foreground selection:text-background">
@@ -103,51 +113,71 @@ export function DossierView({
 
       <div className="mx-auto w-full max-w-[1180px] px-5 pt-10 pb-24 sm:px-8 sm:pt-14">
         <Reveal className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
-          <Item className="shrink-0">
-            <Portrait name={dossier.subject.name} photo={dossier.subject.photo} />
-          </Item>
-          <div className="min-w-0 flex-1">
-            <Item>
-              <p className={CAPTION}>{sample ? "Sample file · fictional subject" : `Subject file ${dossier.fileNumber}`}</p>
+          <>
+            <Item className="shrink-0">
+              <Portrait name={dossier.subject.name} photo={dossier.subject.photo} />
             </Item>
-            <Item>
-              <h1 className="mt-4 text-title">{dossier.subject.name}</h1>
-            </Item>
-            {dossier.subject.oneLine && (
+            <div className="min-w-0 flex-1">
               <Item>
-                <p className="mt-3 max-w-[62ch] text-body text-muted">{dossier.subject.oneLine}</p>
+                <p className={CAPTION}>
+                  {typeof sample === "string"
+                    ? sample
+                    : sample
+                      ? "Sample file · fictional subject"
+                      : `Subject file ${dossier.fileNumber}`}
+                </p>
               </Item>
-            )}
-            <Item>
-              <p className="mt-5 text-label text-muted">
-                Put together from {totals.items} public items across {totals.platforms} platforms. First seen{" "}
-                {month(totals.firstSeen)}, last seen {month(totals.lastSeen)}.
-              </p>
-            </Item>
-            {(dossier.subject.website || interview) && (
               <Item>
-                <div className="mt-6 flex flex-wrap items-center gap-3">
-                  {interview?.href ? (
-                    <Button href={interview.href} variant={interview.emphasis ? "primary" : "secondary"}>
-                      Interrogate them
-                    </Button>
-                  ) : interview?.note ? (
-                    <span className={cx(CAPTION, "shimmer")}>{interview.note}</span>
-                  ) : null}
-                  {dossier.subject.website && (
-                    <a
-                      href={dossier.subject.website.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className="text-label text-muted underline decoration-underline underline-offset-4 transition-colors duration-150 hover:text-foreground"
-                    >
-                      {dossier.subject.website.host} ↗
-                    </a>
-                  )}
-                </div>
+                <h1 className="mt-4 text-title">{dossier.subject.name}</h1>
               </Item>
-            )}
-          </div>
+              {dossier.profile.known.length > 0 && (
+                <Item>
+                  <p className="mt-3 text-[15px]">
+                    {dossier.profile.known
+                      .filter((k) => k.label !== "Speaks" && k.label !== "Age")
+                      .map((k) => k.value)
+                      .join(" · ")}
+                  </p>
+                </Item>
+              )}
+              {(dossier.subject.summary || dossier.subject.oneLine) && (
+                <Item>
+                  <p className="mt-3 max-w-[68ch] text-body text-muted">
+                    {lede(dossier.subject.summary ?? dossier.subject.oneLine ?? "")}
+                  </p>
+                </Item>
+              )}
+              <Item>
+                <p className="mt-5 text-label text-muted">
+                  Put together from {totals.items} public items across {totals.platforms} platforms. First seen{" "}
+                  {month(totals.firstSeen)}, last seen {month(totals.lastSeen)}.
+                </p>
+              </Item>
+              {(dossier.subject.website || interview) && (
+                <Item>
+                  <div className="mt-6 flex flex-wrap items-center gap-3">
+                    {interview?.href ? (
+                      <Button href={interview.href} variant={interview.emphasis ? "primary" : "secondary"}>
+                        Interrogate them
+                      </Button>
+                    ) : interview?.note ? (
+                      <span className={cx(CAPTION, "shimmer")}>{interview.note}</span>
+                    ) : null}
+                    {dossier.subject.website && (
+                      <a
+                        href={dossier.subject.website.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-label text-muted underline decoration-underline underline-offset-4 transition-colors duration-150 hover:text-foreground"
+                      >
+                        {dossier.subject.website.host} ↗
+                      </a>
+                    )}
+                  </div>
+                </Item>
+              )}
+            </div>
+          </>
         </Reveal>
 
         <Reveal className="mt-10 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-3 lg:grid-cols-4 lg:gap-4">
@@ -155,17 +185,23 @@ export function DossierView({
             <Stat label="Public posts" value={posts} hint={`${compact(totals.reach)} people can see them`} />
           </Item>
           <Item>
-            <Stat label="Platforms" value={platforms} hint="Accounts linked to one name" />
+            <Stat label="Accounts" value={accounts} hint={`On ${totals.platforms} platforms, linked to one name`} />
           </Item>
           <Item>
             <Stat label="Years on record" value={years} hint={`Since ${month(totals.firstSeen)}`} />
           </Item>
           <Item>
-            <Stat label="Exposure" value={`${score}`} hint="Out of 100">
-              <Bar value={exposure.score} max={100} />
-            </Stat>
+            <Stat
+              label="Citizen class"
+              value={<span className="text-signal">{dossier.assessment.grade}</span>}
+              hint={`${dossier.assessment.score} of 100, assigned by the system`}
+            />
           </Item>
         </Reveal>
+
+        <PhotoReading reading={dossier.photoReading} photo={dossier.subject.photo} name={dossier.subject.name} />
+
+        <Profile dossier={dossier} />
 
         <Reveal className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-3 lg:mt-4 lg:grid-cols-3 lg:gap-4">
           <Section
@@ -205,32 +241,44 @@ export function DossierView({
           <Section title="Seen on">
             <List inset>
               {dossier.presence.map((p) => (
-                <Row key={p.platform} className="justify-between px-4 py-3">
+                <Row key={`${p.platform}:${p.handle}`} className="justify-between px-4 py-3">
                   <div className="min-w-0">
                     <p className="text-label font-medium">{p.label}</p>
-                    <p className="truncate text-caption text-muted">{p.handle ? `@${p.handle.replace(/^@/, "")}` : "No handle"}</p>
+                    <p className="truncate text-caption text-muted">
+                      {p.platform === "website" ? p.handle : p.handle ? `@${p.handle.replace(/^@/, "")}` : "No handle"}
+                    </p>
+                    {p.via && <p className="truncate text-caption text-muted">Found through {p.via}</p>}
                   </div>
                   <div className="text-right">
-                    <p className="text-label tabular-nums">{p.posts} posts</p>
-                    <p className="text-caption text-muted tabular-nums">
-                      {p.followers ? `${compact(p.followers)} followers` : `Last ${month(p.lastSeen)}`}
+                    <p className="text-label tabular-nums">
+                      {p.private ? "Private" : `${p.count.value} ${p.count.unit}`}
                     </p>
+                    {(p.followers || p.lastSeen) && (
+                      <p className="text-caption text-muted tabular-nums">
+                        {p.followers ? `${compact(p.followers)} followers` : `Last ${month(p.lastSeen)}`}
+                      </p>
+                    )}
                   </div>
                 </Row>
               ))}
             </List>
           </Section>
 
-          <Section title="In their own words" note="Their most seen posts" className="lg:col-span-2">
+          <Section
+            title="In their own words"
+            note={totals.posts ? "Their most seen posts" : "How they describe themselves"}
+            className="lg:col-span-2"
+          >
             <div className="grid gap-3 sm:grid-cols-2">
               {dossier.quotes.map((q, i) => (
-                <figure key={i} className="flex flex-col justify-between gap-4 rounded-field border border-border bg-well p-4">
+                <figure
+                  key={i}
+                  className="flex flex-col justify-between gap-4 rounded-field border border-border bg-well p-4"
+                >
                   <blockquote className="text-[15px] leading-relaxed">{q.text}</blockquote>
                   <figcaption className="flex items-center justify-between gap-3 text-caption text-muted">
-                    <span>
-                      {q.platform} · {day(q.postedAt)}
-                    </span>
-                    <span className="tabular-nums">{compact(q.engagement)} reactions</span>
+                    <span>{[q.platform, day(q.postedAt)].filter(Boolean).join(" · ")}</span>
+                    {q.engagement > 0 && <span className="tabular-nums">{compact(q.engagement)} reactions</span>}
                   </figcaption>
                 </figure>
               ))}
@@ -289,13 +337,310 @@ export function DossierView({
         <Reveal className="mt-16">
           <Item>
             <p className="mx-auto max-w-[60ch] text-center text-label text-muted">
-              This file is a simulation. It was put together only from public posts, the way anyone watching could.
-              Nothing in it is private, and nothing in it is a judgement of the person.
+              This file is a simulation. It was put together only from what they made public, the way anyone watching
+              could. Nothing in it is private, and nothing in it is a judgement of the person.
             </p>
           </Item>
         </Reveal>
       </div>
     </main>
+  );
+}
+
+const SURE = { high: "Sure", medium: "Fairly sure", low: "Unsure" } as const;
+
+/** A small spaced caption over a group inside a section. */
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className={cx(CAPTION, "mb-3")}>{title}</p>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Who they are, what their website says and what they build. Each block shows only when a source had something,
+ * and a block alone on its row takes the full width.
+ */
+function Profile({ dossier }: { dossier: Dossier }) {
+  const { profile, website, code, web } = dossier;
+  const hasWho = profile.known.length + profile.work.length + profile.education.length + profile.facts.length > 0;
+  const hasStory = profile.timeline.length > 0;
+  const skills = website?.skills ?? [];
+  const languages = code?.languages ?? [];
+  const hasTools = skills.length + languages.length > 0;
+  if (!hasWho && !hasStory && !website && !code && !web) return null;
+
+  return (
+    <>
+      {(hasWho || hasStory) && (
+        <Reveal className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-3 lg:mt-4 lg:grid-cols-3 lg:gap-4">
+          {hasWho && (
+            <Section
+              title="Who they are"
+              note="What their profiles state, then what was read"
+              className={hasStory ? "lg:col-span-2" : "lg:col-span-3"}
+            >
+              <div className="flex flex-col gap-7">
+                {profile.known.length > 0 && (
+                  <dl className="grid grid-cols-[minmax(0,1fr)] gap-x-6 gap-y-4 sm:grid-cols-2">
+                    {profile.known.map((k) => (
+                      <div key={k.label} className="min-w-0">
+                        <dt className="text-caption text-muted">{k.label}</dt>
+                        <dd className="mt-0.5 text-[15px]">{k.value}</dd>
+                        <dd className="text-caption text-muted">{k.source}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                {(profile.work.length > 0 || profile.education.length > 0) && (
+                  <div className="grid grid-cols-[minmax(0,1fr)] gap-6 sm:grid-cols-2">
+                    {profile.work.length > 0 && (
+                      <Group title="Work">
+                        <List inset>
+                          {profile.work.map((w, i) => (
+                            <Row key={i} className="flex-col items-start gap-0.5 px-4 py-3">
+                              <p className="text-label">{[w.role, w.company].filter(Boolean).join(" at ")}</p>
+                              {w.when && <p className="text-caption text-muted">{w.when}</p>}
+                            </Row>
+                          ))}
+                        </List>
+                      </Group>
+                    )}
+                    {profile.education.length > 0 && (
+                      <Group title="Studied">
+                        <List inset>
+                          {profile.education.map((e, i) => (
+                            <Row key={i} className="flex-col items-start gap-0.5 px-4 py-3">
+                              <p className="text-label">{e.school}</p>
+                              <p className="text-caption text-muted">
+                                {[e.degree, e.when].filter(Boolean).join(" · ")}
+                              </p>
+                            </Row>
+                          ))}
+                        </List>
+                      </Group>
+                    )}
+                  </div>
+                )}
+                {profile.facts.length > 0 && (
+                  <Group title="Read from everything public">
+                    <List inset>
+                      {profile.facts.map((f, i) => (
+                        <Row key={i} className="flex-col items-start gap-0.5 px-4 py-3">
+                          <p className="text-label">{f.text}</p>
+                          <p className="text-caption text-muted">
+                            {f.platform} · {SURE[f.confidence]}
+                          </p>
+                        </Row>
+                      ))}
+                    </List>
+                  </Group>
+                )}
+              </div>
+            </Section>
+          )}
+          {hasStory && (
+            <Section
+              title="Their story"
+              note="As their public record tells it"
+              className={hasWho ? undefined : "lg:col-span-3"}
+            >
+              <ol className="flex flex-col gap-4 border-l border-border pl-4">
+                {profile.timeline.map((t, i) => (
+                  <li key={i} className="min-w-0">
+                    <p className="text-caption text-muted tabular-nums">{t.date}</p>
+                    <p className="mt-0.5 text-label">{t.event}</p>
+                  </li>
+                ))}
+              </ol>
+            </Section>
+          )}
+        </Reveal>
+      )}
+
+      {(website || hasTools) && (
+        <Reveal className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-3 lg:mt-4 lg:grid-cols-3 lg:gap-4">
+          {website && (
+            <Section
+              title="Their website"
+              note={
+                <a
+                  href={website.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="underline decoration-underline underline-offset-4 transition-colors duration-150 hover:text-foreground"
+                >
+                  {website.host} ↗
+                </a>
+              }
+              className={hasTools ? "lg:col-span-2" : "lg:col-span-3"}
+            >
+              <div className="flex flex-col gap-7">
+                {website.description && (
+                  <p className="max-w-[62ch] text-[15px] leading-relaxed">{website.description}</p>
+                )}
+                {website.projects.length > 0 && (
+                  <Group title="What they made">
+                    <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2">
+                      {website.projects.map((p) => (
+                        <a
+                          key={p.name}
+                          href={p.url ?? website.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="flex min-w-0 flex-col gap-1 rounded-field border border-border bg-well p-4 transition-colors duration-150 hover:border-foreground/30"
+                        >
+                          <span className="text-label font-medium">{p.name}</span>
+                          {p.description && <span className="text-caption text-muted">{p.description}</span>}
+                        </a>
+                      ))}
+                    </div>
+                  </Group>
+                )}
+                <Group title={`Pages read · ${website.pages.length}`}>
+                  <List inset>
+                    {website.pages.map((p) => (
+                      <Row key={p.url} className="flex-col items-start gap-0.5 px-4 py-3">
+                        <a
+                          href={p.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="max-w-full truncate text-label hover:underline"
+                        >
+                          {p.title}
+                        </a>
+                        {p.excerpt && <p className="line-clamp-2 text-caption text-muted">{p.excerpt}</p>}
+                      </Row>
+                    ))}
+                  </List>
+                </Group>
+              </div>
+            </Section>
+          )}
+          {hasTools && (
+            <Section title="What they work with" className={website ? undefined : "lg:col-span-3"}>
+              <div className="flex flex-col gap-6">
+                {skills.length > 0 && (
+                  <Group title="Skills they list">
+                    <div className="flex flex-wrap gap-2">
+                      {skills.map((s) => (
+                        <Badge key={s} size="md">
+                          {s}
+                        </Badge>
+                      ))}
+                    </div>
+                  </Group>
+                )}
+                {languages.length > 0 && (
+                  <Group title="Languages in their code">
+                    <div className="flex flex-col gap-3.5">
+                      {languages.map((l) => (
+                        <div key={l.label}>
+                          <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                            <p className="text-label">{l.label}</p>
+                            <p className="text-caption text-muted tabular-nums">{l.count}</p>
+                          </div>
+                          <Bar value={l.count} max={languages[0].count} />
+                        </div>
+                      ))}
+                    </div>
+                  </Group>
+                )}
+              </div>
+            </Section>
+          )}
+        </Reveal>
+      )}
+
+      {web && (
+        <Reveal className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-3 lg:mt-4 lg:grid-cols-3 lg:gap-4">
+          {web.mentions.length > 0 && (
+            <Section
+              title="On the web"
+              note={`${web.mentions.length} pages that name them`}
+              className={web.facts.length ? "lg:col-span-2" : "lg:col-span-3"}
+            >
+              <List inset>
+                {web.mentions.map((m) => (
+                  <Row key={m.url} className="flex-col items-start gap-1 px-4 py-3.5">
+                    <p className="text-caption text-muted">{[m.source, day(m.date)].filter(Boolean).join(" · ")}</p>
+                    <a
+                      href={m.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="max-w-full text-label font-medium hover:underline"
+                    >
+                      {m.title}
+                    </a>
+                    {m.summary && <p className="text-caption text-muted">{m.summary}</p>}
+                  </Row>
+                ))}
+              </List>
+            </Section>
+          )}
+          {web.facts.length > 0 && (
+            <Section
+              title="What the web says"
+              note="Each with its source"
+              className={web.mentions.length ? undefined : "lg:col-span-3"}
+            >
+              <ul className="flex flex-col gap-4">
+                {web.facts.map((f, i) => (
+                  <li key={i} className="min-w-0">
+                    <p className="text-label">{f.text}</p>
+                    <a
+                      href={f.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-caption text-muted underline decoration-underline underline-offset-4 hover:text-foreground"
+                    >
+                      {f.source}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+        </Reveal>
+      )}
+
+      {code && code.repos.length > 0 && (
+        <Reveal className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-3 lg:mt-4 lg:gap-4">
+          <Section
+            title="What they build"
+            note={code.actions ? `${code.actions} public actions on GitHub lately` : "On GitHub"}
+          >
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {code.repos.map((r) => (
+                <a
+                  key={r.name}
+                  href={r.url ?? undefined}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="flex min-w-0 flex-col justify-between gap-4 rounded-field border border-border bg-well p-4 transition-colors duration-150 hover:border-foreground/30"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-label font-medium">{r.name}</p>
+                    {r.description && <p className="mt-1 line-clamp-3 text-caption text-muted">{r.description}</p>}
+                  </div>
+                  <p className="text-caption text-muted tabular-nums">
+                    {[
+                      r.language,
+                      r.stars ? `${r.stars} stars` : null,
+                      r.lastWorked ? `Worked on ${month(r.lastWorked)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </a>
+              ))}
+            </div>
+          </Section>
+        </Reveal>
+      )}
+    </>
   );
 }
 
@@ -382,5 +727,45 @@ function Portrait({ name, photo }: { name: string; photo: string | null }) {
         </span>
       )}
     </div>
+  );
+}
+
+/** What their photo gives away, beside the photo. */
+function PhotoReading({
+  reading,
+  photo,
+  name,
+}: {
+  reading: Dossier["photoReading"];
+  photo: string | null;
+  name: string;
+}) {
+  if (!reading?.length) return null;
+  return (
+    <Reveal className="mt-3 lg:mt-4">
+      <Section title="What the photo gives away" note="Read from one public picture">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 sm:grid-cols-[160px_minmax(0,1fr)]">
+          {photo && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={photo}
+              alt={`${name}, the photo being read`}
+              className="aspect-[3/4] w-full max-w-[160px] rounded-field object-cover grayscale contrast-[1.05]"
+            />
+          )}
+          <List inset>
+            {reading.map((r) => (
+              <Row key={r.label} className="items-baseline justify-between gap-4 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-caption text-muted">{r.label}</p>
+                  <p className="text-label">{r.value}</p>
+                </div>
+                <span className="text-label text-signal tabular-nums">{r.relevance}</span>
+              </Row>
+            ))}
+          </List>
+        </div>
+      </Section>
+    </Reveal>
   );
 }

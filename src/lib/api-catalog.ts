@@ -139,7 +139,7 @@ export const routes: RouteDoc[] = [
     group: "Discovery",
     summary: "Find a name's public profiles",
     description:
-      "Runs one Google search per platform for the name in quotes. Poll `GET /api/discover/:id` until `status` is `ready`, then let the visitor confirm which candidates are really the person and pass those to `POST /api/research` as targets.",
+      "Runs one Google search per platform for the name in quotes, looks up the Instagram handles a person with that name would pick, and, with OpenAI set up, asks ChatGPT to search the web for their accounts. Poll `GET /api/discover/:id` until `status` is `ready`, then let the visitor confirm which candidates are really the person and pass those to `POST /api/research` as targets.",
     auth: "user",
     body: StartDiscovery,
     bodyExample: { name: "Jane Doe", purpose: "Gather intelligence" },
@@ -281,21 +281,28 @@ export const routes: RouteDoc[] = [
     group: "Research",
     summary: "The watcher's file",
     description:
-      "What a watcher could put together from the job's public data. Where they are, when they post (UTC), how much, who they mention, their most seen posts and an exposure score out of 100. It describes exposure only and never scores the person. The `/dossier/sample` page shows it for a fictional subject.",
+      "What a watcher could put together from the job's public data. Who they are (job, city, work and schooling, as their profiles and site state it), what their website says, what they build on GitHub, where they are, when they are active (UTC), who they mention, their own words and an exposure score out of 100. It describes exposure only and never scores the person. The `/dossier/sample` page shows it for a fictional subject.",
     auth: "user",
     params: { id: "Job ID" },
     response: {
       status: 200,
       example: {
         jobStatus: "ready",
-        sources: [{ platform: "instagram", status: "done", items: 31 }],
+        sources: [{ platform: "instagram", status: "done", items: 31, via: "their website" }],
         dossier: {
           fileNumber: "0417-K",
           subject: { name: "Mara Vell", oneLine: "Film photographer in Prague…" },
           totals: { items: 214, posts: 210, platforms: 4, reach: 7070, yearsVisible: 3.1 },
           routine: { peak: { day: 1, hour: 20, count: 9 }, busiestHours: [20, 21, 10] },
           exposure: { score: 78, factors: [{ label: "Volume", detail: "210 public posts", value: 27 }] },
-          "…": "presence, activity, topics, circle, quotes, views",
+          profile: {
+            known: [{ label: "Works as", value: "Photographer", source: "Their website" }],
+            work: [{ role: "Photographer", company: "Studio Nord", when: "Mar 2022 to Present" }],
+            facts: [{ text: "Prints in her own darkroom", platform: "Website", confidence: "high" }],
+          },
+          website: { host: "mara-vell.example", projects: [{ name: "Panel", url: "https://mara-vell.example/panel" }] },
+          code: null,
+          "…": "presence, activity, topics, circle, quotes, views, education, timeline",
         },
       },
     },

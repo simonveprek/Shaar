@@ -10,8 +10,10 @@ import { reddit } from "./reddit";
 import { threads } from "./threads";
 import { pinterest } from "./pinterest";
 import { website } from "./website";
+import { github } from "./github";
+import { web } from "./web";
 
-const connectors: Connector[] = [instagram, tiktok, x, linkedin, youtube, facebook, reddit, threads, pinterest, website];
+const connectors: Connector[] = [instagram, tiktok, x, linkedin, youtube, facebook, reddit, threads, pinterest, github, website, web];
 
 const byPlatform = new Map(connectors.map((c) => [c.platform, c]));
 

@@ -56,8 +56,8 @@ export async function addFeelings(interview: InterviewRow, events: FeelingEvent[
 }
 
 /**
- * Ensures the persona has an ElevenLabs agent using the requested voice, creating or updating it as needed.
- * Candidate personas are always re-synced, so edits to the brief or prompt reach the agent.
+ * Ensures the persona has an ElevenLabs agent using the requested voice and the current prompt, creating it or
+ * updating it.
  */
 export async function ensureAgent(persona: PersonaRow, voiceId?: string): Promise<PersonaRow> {
   if (persona.status !== "ready" || !persona.profile) throw new HttpError(409, "Persona is not ready yet");
@@ -69,8 +69,8 @@ export async function ensureAgent(persona: PersonaRow, voiceId?: string): Promis
     env().ELEVENLABS_DEFAULT_VOICE_ID ??
     FALLBACK_VOICE;
 
-  if (persona.elevenlabs_agent_id && persona.voice_id === voice && !persona.candidate) return persona;
-
+  // An existing agent is updated before every call, so a changed prompt (like speaking in the first person)
+  // reaches agents made before the change. It is one quick request.
   let agentId = persona.elevenlabs_agent_id;
   if (agentId) await updatePersonaAgent(agentId, persona.profile, voice, persona.candidate);
   else agentId = await createPersonaAgent(persona.profile, voice, persona.candidate);

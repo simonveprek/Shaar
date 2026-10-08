@@ -31,6 +31,8 @@
 
   --danger: #c4372b;
   --success: #2f8f5b;
+  /* Shaar's one colour, for what the system flags: a class, a relevance score, a match. Never decoration. */
+  --signal: #d8361e;
 
   /* Main buttons, switches, checks and fills, and the brand colour. */
   --primary: #1d1b18;
@@ -81,6 +83,7 @@
 
   --danger: #f0695c;
   --success: #5fc48c;
+  --signal: #ff4a2b;
 
   --primary: #ededed;
   --primary-ink: #111111;
@@ -111,6 +114,7 @@
   --color-comment: var(--comment);
   --color-danger: var(--danger);
   --color-success: var(--success);
+  --color-signal: var(--signal);
   --color-primary: var(--primary);
   --color-primary-ink: var(--primary-ink);
   --color-accent: var(--accent);

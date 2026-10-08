@@ -51,6 +51,8 @@ const SHORT: Record<string, string> = {
   reddit: "Reddit",
   threads: "Threads",
   pinterest: "Pinterest",
+  github: "GitHub",
+  website: "Website",
 };
 
 /** How long each shot holds, in ms. Search holds at least this long, then until the answers are in. */

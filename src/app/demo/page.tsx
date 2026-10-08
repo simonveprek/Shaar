@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { MARA } from "../demos";
 import { Landing } from "../landing";
 
 export const metadata: Metadata = {
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 
 /** The full flow with a fictional subject and no API calls. See DEMO_* in landing.tsx. */
 export default function DemoPage() {
-  return <Landing demo />;
+  return <Landing demo={MARA} />;
 }

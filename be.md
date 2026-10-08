@@ -66,10 +66,16 @@ Frontend polls    ─► GET /api/research/:id                ┴─► advanceJ
   1. syncConnectorRun for each running run:
        Apify status terminal? → claim (running→ingesting) → read dataset → normalize → upsert scraped_items
        → succeeded (partial data from a timed-out/capped run still counts) | failed
-  2. all runs done?
+     (GitHub has no Apify run: its connector's `fetch` reads the public API and ingests at once. The web search
+     is a `background` source: an OpenAI background response polled like an Apify run, its id in apify_run_id.)
+  2. followLinks (src/lib/follow.ts): accounts linked from their bios, or declared as theirs in their site's
+     JSON-LD (sameAs), on platforms not read yet → new connector_runs with `followed_from` ("their website").
+     A plain link on their site only counts when the handle spells their name. One per platform, at most 5,
+     a partial unique index stops two pollers starting the same one.
+  3. all runs done?
        any items → claim job (scraping→analyzing) → build digest → OpenAI background response → personas row (generating)
        no items  → job failed
-  3. job analyzing → poll OpenAI response → personas.profile (ready) → job ready | failed
+  4. job analyzing → poll OpenAI response → personas.profile (ready) → job ready | failed
 ```
 
 Status values:
@@ -141,8 +147,8 @@ Users only ever see their own rows.
 | `GET /api/connectors` | | `{ connectors: [{ platform, label, targetHint, notes, actors: [{ actorId, role }] }] }` |
 | `GET /api/connectors/:platform` | | `{ connector }` |
 | `POST /api/connectors/:platform` | `{ target, maxPosts?, jobId?, subjectName? }` | 201 `{ job, runs }`. New job unless `jobId` given |
-| `POST /api/discover` | `{ name, purpose? }` | 201 `{ discovery }`: one Google search per platform for the name (Apify `apify/google-search-scraper`) |
-| `GET /api/discover/:id` | | `{ discovery }` with `status` searching, ready or failed and ranked `candidates` (profile links whose title matches the name, two per platform). The visitor confirms which are the person, then those go to `POST /api/research` as targets |
+| `POST /api/discover` | `{ name, purpose? }` | 201 `{ discovery }`: three searches side by side. One Google search per platform for the name (Apify `apify/google-search-scraper`), the Instagram handles a person with that name would pick (simonveprek, simon.veprek, ... in one `apify/instagram-profile-scraper` run), and a ChatGPT web search for their accounts when OpenAI is set up |
+| `GET /api/discover/:id` | | `{ discovery }` with `status` searching, ready or failed and ranked `candidates` (up to three per platform). Google decides when it is done; the other two get up to 75 s and are left out if slower. The visitor confirms which are the person, then those go to `POST /api/research` as targets |
 | `POST /api/research` | `{ subjectName, notes?, targets: [{ platform, target, maxPosts? (1-500, default 30) }] }` (1-20 targets) | 201 `{ job, runs }` |
 | `GET /api/research` | `?limit=` (≤100) | `{ jobs: [job + personas(id, status, display_name, one_line_summary)] }` |
 | `GET /api/research/:id` | | `{ job, runs, persona, itemCounts: { [platform]: { profile?, post?, comment? } } }`; **also advances the job** |
@@ -163,7 +169,11 @@ Users only ever see their own rows.
 | `POST /api/webhooks/elevenlabs` | ElevenLabs post-call payload, `ElevenLabs-Signature` header | Server-to-server only |
 
 **Platforms** (`platform` values): `instagram`, `tiktok`, `x`, `linkedin`, `youtube`, `facebook`,
-`reddit`, `threads`, `pinterest`, and `website` (their own site, up to 5 pages read as text). `target` is a handle or a profile URL; each connector normalizes it.
+`reddit`, `threads`, `pinterest`, `github` (public API, no Apify; set `GITHUB_TOKEN` for more than 60 requests an
+hour), `web` (ChatGPT with web search, added to every job when OpenAI is set up, told the confirmed profiles so
+namesakes stay out; brings `mention` items for pages about them, facts with sources, and accounts it is sure of,
+which are followed) and `website` (their own site, up to 12 pages, with its JSON-LD read into `details`). `target` is a handle or a
+profile URL; each connector normalizes it.
 
 ### Frontend recipes
 
@@ -211,10 +221,10 @@ same-origin routes (`src/lib/client.ts`).
 | Table | Key columns |
 | --- | --- |
 | `research_jobs` | `id`, `user_id`, `subject_name`, `notes`, `status`, `error` |
-| `connector_runs` | `job_id`, `platform`, `target`, `actor_id`, `input`, `apify_run_id`, `dataset_id`, `status`, `item_count`, `error` |
-| `scraped_items` | `job_id`, `run_id`, `platform`, `kind` (profile/post/comment), `external_id`, `url`, `author`, `text`, `posted_at`, `metrics` (jsonb numbers), `media` (url array), `data` (raw Apify item). Unique `(run_id, external_id)` |
+| `connector_runs` | `job_id`, `platform`, `target`, `actor_id`, `input`, `apify_run_id`, `dataset_id`, `status`, `item_count`, `error`, `followed_from` (set when Shaar found the account itself) |
+| `scraped_items` | `job_id`, `run_id`, `platform`, `kind` (profile/post/comment/page/repo/activity/mention), `external_id`, `url`, `author`, `text`, `posted_at`, `metrics` (jsonb numbers), `media` (url array), `links` (urls they published), `details` (facts the source states, like a job title, work history or a private account), `data` (raw item). Unique `(run_id, external_id)` |
 | `personas` | `job_id` (unique), `status`, `model`, `openai_response_id`, `profile` (jsonb `PersonaProfile`), `candidate` (jsonb `CandidateBrief`, nullable), `voice_id`, `elevenlabs_agent_id` |
-| `discoveries` | `name`, `purpose`, `status` (searching/ready/failed), `apify_run_id`, `candidates` (jsonb) |
+| `discoveries` | `name`, `purpose`, `status` (searching/ready/failed), `apify_run_id`, `probe_run_id` (Instagram handles), `web_response_id` (ChatGPT search), `candidates` (jsonb) |
 | `interviews` | `persona_id`, `elevenlabs_conversation_id` (unique), `status`, `transcript`, `analysis`, `duration_secs`, `difficulty`, `feelings`, `feedback_status`, `feedback_response_id`, `feedback` (jsonb `StoredFeedback`), `feedback_error` |
 
 - `user_id` is the visitor id. **Every query must filter by `user_id`** (or go through `getJob`/`getPersona`/
@@ -283,7 +293,11 @@ Conventions:
 4. `normalize` must return `[]` for error/irrelevant items, emit profiles with
    `externalId: profileId(handle)` (deduped per run), and use `date()` for timestamps (it handles ISO,
    unix seconds/ms, X's format, RFC-2822; relative dates become null).
-5. Never remove or rename an `actorId` that existing `connector_runs` rows reference without a migration
+5. A source with a free public API can set `fetch(input)` instead of running on Apify (see `github.ts`). It runs
+   inside a request, so it must finish in seconds. Facts the source states outright go in `details`, links the
+   person published in `links` (they drive following, see section 4).
+6. An actor whose default memory is far above its need sets `memoryMbytes`; the free plan has 8 GB in total.
+7. Never remove or rename an `actorId` that existing `connector_runs` rows reference without a migration
    plan: `getActor` looks runs up by `(platform, actor_id)`.
 
 Every run is capped by `APIFY_MAX_CHARGE_USD_PER_RUN` (default $1).

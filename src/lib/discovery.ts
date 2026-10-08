@@ -1,20 +1,29 @@
 import { listConnectors } from "@/connectors";
 import { parseProfileUrl, PROFILE_SITES } from "@/connectors/profile-url";
 import { apify, TERMINAL_RUN_STATUSES } from "./apify";
-import { env } from "./env";
+import { env, envVar } from "./env";
+import { pollWebSearch, startWebSearch, type WebPoll } from "./web-search";
 import { json, maybeOne, one } from "./db";
 import { HttpError, notFound } from "./http";
 
 /*
- * From a name to profiles. One Google search per platform for the name in
- * quotes, plus one open search for their own website, run as a single Apify
- * actor run. Results that are real profile links become candidates, ranked by
- * how well their title matches the name. A site whose domain carries the name
- * becomes a website candidate. Nothing is scraped until the visitor confirms
- * which candidates are the person.
+ * From a name to profiles, with three searches side by side:
+ *
+ *   Google: one search per platform for the name in quotes, plus one open search for their own website, in a
+ *     single Apify run. Results that are real profile links become candidates, ranked by how well their title
+ *     matches the name. A site whose domain carries the name becomes a website candidate.
+ *   Instagram handles: the handles a person with this name would pick (simonveprek, simon.veprek, ...), looked
+ *     up in one run. Second accounts rarely rank on Google, so this is how they turn up.
+ *   ChatGPT: a web search for the person's accounts, when OpenAI is set up.
+ *
+ * Google decides when the search is done; the other two get until EXTRAS_WAIT_MS and are left out if they are
+ * slower. Nothing is scraped until the visitor confirms which candidates are the person.
  */
 
 const ACTOR = "apify/google-search-scraper";
+const PROBE_ACTOR = "apify/instagram-profile-scraper";
+const EXTRAS_WAIT_MS = 75_000;
+const terminal = (status: string) => (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
 
 export type Candidate = {
   id: string;
@@ -38,6 +47,10 @@ export type DiscoveryRow = {
   candidates: Candidate[];
   /** Google results read per platform. Null until the search has finished. */
   scanned: Record<string, number> | null;
+  /** The Instagram handle lookup's Apify run, when it could start. */
+  probe_run_id: string | null;
+  /** The ChatGPT web search's OpenAI response, when OpenAI is set up. */
+  web_response_id: string | null;
   error: string | null;
   created_at: string;
 };
@@ -45,7 +58,7 @@ export type DiscoveryRow = {
 const LABELS = new Map(listConnectors().map((c) => [c.platform, c.label]));
 
 // Sites that are never a person's own website, even when their name is on them.
-const NOT_OWN_SITE =
+export const NOT_OWN_SITE =
   /(^|\.)(instagram|tiktok|x|twitter|linkedin|youtube|facebook|reddit|threads|pinterest|wikipedia|wikidata|google|imdb|crunchbase|github|medium|amazon|apple|spotify|bloomberg|forbes|nytimes|bbc|cnn|theguardian|zoominfo|rocketreach|signalhire|peoplefinders|whitepages|spokeo)\.[a-z.]+$/i;
 
 /** A site that is probably the person's own: its domain spells their name, like janedoe.com or jane-doe.design. */
@@ -66,7 +79,7 @@ export function ownSite(name: string, url: string): { host: string; origin: stri
   const spells = parts.every((w) => label.includes(w)) || (label.includes(surname) && label.startsWith(parts[0][0]));
   return spells ? { host, origin: parsed.origin } : null;
 }
-const PER_PLATFORM = 2;
+const PER_PLATFORM = 3;
 
 const words = (s: string) =>
   s
@@ -77,7 +90,7 @@ const words = (s: string) =>
     .filter(Boolean);
 
 /** Share of the name's words that appear in the result title or handle. */
-function matchScore(name: string, title: string, handle: string): number {
+export function matchScore(name: string, title: string, handle: string): number {
   const want = words(name);
   if (!want.length) return 0;
   const have = new Set([...words(title), ...words(handle)]);
@@ -93,7 +106,43 @@ export async function startDiscovery(userId: string, name: string, purpose: stri
     name,
     purpose,
   ]);
-  return launchSearch(row);
+  // The extra searches start once Google has, so they never take the Apify slot Google is waiting for.
+  const searching = await launchSearch(row);
+  return searching.apify_run_id ? launchExtras(searching) : searching;
+}
+
+/** Instagram handles a person with this name might use, like simonveprek, simon.veprek and veprek_simon. */
+export function handleVariants(name: string): string[] {
+  const parts = words(name).filter((w) => w.length > 1);
+  if (parts.length < 2) return [];
+  const [f, l] = [parts[0], parts[parts.length - 1]];
+  const all = [
+    `${f}${l}`, `${f}.${l}`, `${f}_${l}`, `${l}${f}`, `${l}.${f}`, `${l}_${f}`,
+    `${f}${l}_`, `_${f}${l}`, `${f}.${l}_`, `${f[0]}${l}`, `${f[0]}.${l}`, `${f}.${l[0]}`,
+  ];
+  return [...new Set(all)].filter((h) => /^[a-z0-9._]{3,30}$/.test(h));
+}
+
+/** Starts the Instagram handle lookup and the ChatGPT search. Either may be missing; Google is enough. */
+async function launchExtras(row: DiscoveryRow): Promise<DiscoveryRow> {
+  const handles = handleVariants(row.name);
+  const [probe, web] = await Promise.all([
+    handles.length
+      ? apify()
+          .actor(PROBE_ACTOR)
+          .start({ usernames: handles }, { maxItems: handles.length, maxTotalChargeUsd: env().APIFY_MAX_CHARGE_USD_PER_RUN })
+          .then((r) => r.id)
+          .catch(() => null)
+      : null,
+    envVar("OPENAI_API_KEY")
+      ? startWebSearch(row.name, [], "Focus on finding their accounts. Keep mentions and facts brief.").catch(() => null)
+      : null,
+  ]);
+  return one<DiscoveryRow>("update discoveries set probe_run_id = $1, web_response_id = $2 where id = $3 returning *", [
+    probe,
+    web,
+    row.id,
+  ]);
 }
 
 /**
@@ -128,6 +177,17 @@ async function launchSearch(row: DiscoveryRow): Promise<DiscoveryRow> {
   }
 }
 
+/** A site a web search says is theirs, unless it is a big platform. */
+function ownSiteFromSearch(url: string): { host: string; origin: string } | null {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "");
+    return NOT_OWN_SITE.test(host) ? null : { host, origin: parsed.origin };
+  } catch {
+    return null;
+  }
+}
+
 export async function getDiscovery(id: string, userId: string): Promise<DiscoveryRow> {
   const row = /^[0-9a-f-]{36}$/i.test(id)
     ? await maybeOne<DiscoveryRow>("select * from discoveries where id = $1 and user_id = $2", [id, userId])
@@ -139,9 +199,21 @@ export async function getDiscovery(id: string, userId: string): Promise<Discover
 /** Checks the search; once it has finished, turns its results into ranked candidates. Safe to call repeatedly. */
 export async function syncDiscovery(row: DiscoveryRow): Promise<DiscoveryRow> {
   if (row.status !== "searching") return row;
-  if (!row.apify_run_id) return launchSearch(row);
+  if (!row.apify_run_id) {
+    const started = await launchSearch(row);
+    return started.apify_run_id && !started.probe_run_id && !started.web_response_id ? launchExtras(started) : started;
+  }
   const run = await apify().run(row.apify_run_id).get();
-  if (!run || !(TERMINAL_RUN_STATUSES as readonly string[]).includes(run.status)) return row;
+  if (!run || !terminal(run.status)) return row;
+
+  // The other two searches get a while longer than Google, then the answer goes out without them.
+  const late = Date.now() - new Date(row.created_at).getTime() > EXTRAS_WAIT_MS;
+  const probe = row.probe_run_id ? await apify().run(row.probe_run_id).get().catch(() => undefined) : undefined;
+  const web: WebPoll | null = row.web_response_id
+    ? await pollWebSearch(row.web_response_id).catch((err) => ({ state: "failed" as const, error: String(err) }))
+    : null;
+  const probeDone = !probe || terminal(probe.status);
+  if (!late && (!probeDone || web?.state === "pending")) return row;
 
   const { items } = await apify().dataset(run.defaultDatasetId).listItems({ clean: true, limit: 50 });
   const seen = new Set<string>();
@@ -183,6 +255,56 @@ export async function syncDiscovery(row: DiscoveryRow): Promise<DiscoveryRow> {
         title,
         snippet: (result.description ?? "").trim().slice(0, 220),
         match: matchScore(row.name, title, ref.handle),
+      });
+    }
+  }
+
+  // Instagram accounts under the handles a person with this name would pick. An account that shows a name must
+  // show all of it (sveprek can be Samuel Vepřek); one with no name stays, since the handle spells the name.
+  if (probe && terminal(probe.status)) {
+    const { items: found } = await apify().dataset(probe.defaultDatasetId).listItems({ clean: true, limit: 20 });
+    for (const raw of found as Record<string, unknown>[]) {
+      const username = typeof raw.username === "string" ? raw.username : null;
+      if (!username || raw.error || seen.has(`instagram:${username.toLowerCase()}`)) continue;
+      const fullName = typeof raw.fullName === "string" ? raw.fullName.trim() : "";
+      const named = fullName ? matchScore(row.name, fullName, "") : 0.5;
+      if (named < 1 && fullName) continue;
+      seen.add(`instagram:${username.toLowerCase()}`);
+      const followers = typeof raw.followersCount === "number" ? `${raw.followersCount} followers` : null;
+      candidates.push({
+        id: `instagram:${username.toLowerCase()}`,
+        platform: "instagram",
+        label: LABELS.get("instagram") ?? "Instagram",
+        handle: username,
+        url: `https://www.instagram.com/${username}`,
+        title: fullName ? `${fullName} (@${username})` : `@${username}`,
+        snippet: [raw.private ? "Private account" : null, followers, typeof raw.biography === "string" ? raw.biography : null]
+          .filter(Boolean)
+          .join(" · ")
+          .slice(0, 220),
+        match: 0.5 + named / 2,
+      });
+    }
+  }
+
+  // Accounts ChatGPT found on the web and is reasonably sure of.
+  if (web?.state === "done") {
+    for (const account of web.found.accounts) {
+      if (account.confidence === "low") continue;
+      const ref = parseProfileUrl(account.url);
+      const site = ref ? null : ownSiteFromSearch(account.url);
+      const id = ref ? `${ref.platform}:${ref.handle.toLowerCase()}` : site ? `website:${site.host}` : null;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      candidates.push({
+        id,
+        platform: ref?.platform ?? "website",
+        label: ref ? (LABELS.get(ref.platform) ?? ref.platform) : "Website",
+        handle: ref?.handle ?? site!.host,
+        url: ref?.url ?? site!.origin,
+        title: ref ? `${account.platform} @${ref.handle}` : site!.host,
+        snippet: `Found by a web search. ${account.why}`.slice(0, 220),
+        match: account.confidence === "high" ? 0.95 : 0.7,
       });
     }
   }

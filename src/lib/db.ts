@@ -63,10 +63,19 @@ create table if not exists scraped_items (
 );
 create index if not exists scraped_items_job_idx on scraped_items (job_id, platform, kind, posted_at desc);
 
--- Pages from a person's own website, and the links they published in their bios.
+-- Pages from a person's own website, GitHub repositories and activity, and the links they published in their bios.
 alter table scraped_items drop constraint if exists scraped_items_kind_check;
-alter table scraped_items add constraint scraped_items_kind_check check (kind in ('profile', 'post', 'comment', 'page'));
+alter table scraped_items add constraint scraped_items_kind_check
+  check (kind in ('profile', 'post', 'comment', 'page', 'repo', 'activity', 'mention'));
 alter table scraped_items add column if not exists links jsonb not null default '[]'::jsonb;
+-- Facts a source states outright, like a job title, a city or a private account.
+alter table scraped_items add column if not exists details jsonb not null default '{}'::jsonb;
+
+-- Accounts Shaar found linked from the person's own site or bios and read on its own. The index keeps two
+-- pollers from starting the same one twice.
+alter table connector_runs add column if not exists followed_from text;
+create unique index if not exists connector_runs_followed_idx on connector_runs (job_id, actor_id, target)
+  where followed_from is not null;
 
 create table if not exists personas (
   id                    uuid primary key default gen_random_uuid(),
@@ -126,6 +135,9 @@ create table if not exists discoveries (
 create index if not exists discoveries_user_idx on discoveries (user_id, created_at desc);
 -- Google results read per platform, so the search can say how much it went through.
 alter table discoveries add column if not exists scanned jsonb;
+-- Two more searches beside Google: Instagram handles built from the name, and ChatGPT searching the web.
+alter table discoveries add column if not exists probe_run_id text;
+alter table discoveries add column if not exists web_response_id text;
 `;
 
 // Postgres type ids: timestamptz, timestamp, int8. Timestamps come back as ISO strings and

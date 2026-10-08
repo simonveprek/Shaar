@@ -81,6 +81,12 @@ export type MeetCallProps = {
    */
   loadFeedback?: (call: EndedCall) => Promise<CandidateFeedback>;
   defaultDifficulty?: Difficulty;
+  /** The caption over the lobby. Defaults to a practice interview. */
+  kind?: string;
+  /** The line under the join button that says who they are about to talk to. */
+  disclaimer?: string;
+  /** Show the difficulty choice. Only practice candidates play a difficulty. */
+  askDifficulty?: boolean;
   /** Design preview: render a screen with sample data, without connecting. */
   preview?: { phase: "call" | "left"; lines?: Line[]; feelings?: FeelingEvent[] };
 };
@@ -150,6 +156,9 @@ function Meet({
   feedbackHref,
   loadFeedback,
   defaultDifficulty = "realistic",
+  kind = "Practice interview",
+  disclaimer = "The candidate is an AI simulation built from public profile data.",
+  askDifficulty = true,
   preview,
 }: MeetCallProps) {
   const isPreview = Boolean(preview);
@@ -300,6 +309,9 @@ function Meet({
         setDifficulty={setDifficulty}
         joining={phase === "connecting"}
         onJoin={join}
+        kind={kind}
+        disclaimer={disclaimer}
+        askDifficulty={askDifficulty}
       />
     );
   }
@@ -567,6 +579,9 @@ function Lobby(props: {
   setDifficulty: (d: Difficulty) => void;
   joining: boolean;
   onJoin: () => void;
+  kind: string;
+  disclaimer: string;
+  askDifficulty: boolean;
 }) {
   const { candidate, camera, micOn, camOn, joining } = props;
   return (
@@ -604,7 +619,7 @@ function Lobby(props: {
         </div>
 
         <div className="flex flex-col items-start">
-          <p className={CAPTION}>Practice interview</p>
+          <p className={CAPTION}>{props.kind}</p>
           <h1 className="mt-4 text-title">Ready to join?</h1>
           <div className="mt-5 flex items-center gap-3">
             <Avatar name={candidate.name} size="md" />
@@ -615,20 +630,24 @@ function Lobby(props: {
               </p>
             </div>
           </div>
-          <p className={cx(CAPTION, "mt-8")}>Difficulty</p>
-          <Segmented
-            className="mt-3"
-            label="Interview difficulty"
-            value={props.difficulty}
-            onChange={props.setDifficulty}
-            options={DIFFICULTIES}
-          />
+          {props.askDifficulty && (
+            <>
+              <p className={cx(CAPTION, "mt-8")}>Difficulty</p>
+              <Segmented
+                className="mt-3"
+                label="Interview difficulty"
+                value={props.difficulty}
+                onChange={props.setDifficulty}
+                options={DIFFICULTIES}
+              />
+            </>
+          )}
           <Button variant="primary" size="lg" className="mt-8 min-w-40" onClick={props.onJoin} disabled={joining}>
             {joining ? <Spinner size="sm" label="Joining" /> : null}
             {joining ? "Joining" : "Join now"}
           </Button>
           <p className="mt-4 max-w-[38ch] text-caption text-muted">
-            The candidate is an AI simulation built from public profile data.
+            {props.disclaimer}
           </p>
         </div>
       </div>

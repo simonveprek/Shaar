@@ -78,6 +78,94 @@ export function sampleDossierInput(): DossierInput {
     });
   }
 
+  // Her own site, and what LinkedIn states about her work. Invented, like everything here.
+  items.push(
+    {
+      platform: "website",
+      kind: "page",
+      author: "Mara Vell, photographer",
+      text: "Mara Vell, photographer\n\nFilm photographs of post-war housing, tram depots and the people who live with concrete. Prints, commissions and the occasional workshop.",
+      posted_at: null,
+      url: "https://mara-vell.example/",
+      metrics: {},
+      details: {
+        description: "Film photographs of post-war housing, tram depots and the people who live with concrete.",
+        jobTitle: "Photographer",
+        worksFor: "Studio Nord",
+        location: "Prague, CZ",
+        skills: ["Medium format film", "Darkroom printing", "Architecture", "Portraits"],
+        projects: [
+          { name: "Panel", url: "https://mara-vell.example/panel", description: "Three years of housing blocks on the east side, shot on a Kiev 88." },
+          { name: "Depot", url: "https://mara-vell.example/depot", description: "Night shifts at the tram depot, with the people who keep it running." },
+          { name: "Dawn runs", url: "https://mara-vell.example/dawn", description: "The city before it wakes up, one roll a week." },
+        ],
+        sameAs: [],
+      },
+    },
+    {
+      platform: "website",
+      kind: "page",
+      author: "Prints and commissions",
+      text: "Prints and commissions\n\nEvery print is made by hand in my darkroom in Žižkov. Editions of twenty, signed. Commissions for architects and housing cooperatives.",
+      posted_at: null,
+      url: "https://mara-vell.example/prints",
+      metrics: {},
+    },
+  );
+  items.find((i) => i.platform === "linkedin")!.details = {
+    headline: "Photographer at Studio Nord",
+    location: "Prague, Czechia",
+    work: [
+      { role: "Photographer", company: "Studio Nord", from: "Mar 2022", to: "Present" },
+      { role: "Photo editor", company: "Městský list", from: "Jan 2018", to: "Feb 2022" },
+    ],
+    education: [{ school: "FAMU Prague", degree: "Photography", period: "2013 to 2017" }],
+  };
+
+  // A second Instagram, for film only, and what a web search found. Invented too.
+  items.push(
+    {
+      platform: "instagram",
+      kind: "profile",
+      author: "mara.film",
+      text: "Kiev 88 only. Prague after dark.",
+      posted_at: null,
+      url: null,
+      metrics: { followers: 380 },
+    },
+    {
+      platform: "web",
+      kind: "profile",
+      author: null,
+      text: null,
+      posted_at: null,
+      url: null,
+      metrics: {},
+      details: {
+        facts: [
+          { fact: "Showed the Panel series at a Prague gallery in 2025", url: "https://galerie.example/panel" },
+          { fact: "Teaches a darkroom workshop twice a year", url: "https://studionord.example/workshops" },
+          { fact: "Was shortlisted for a city photography award in 2024", url: "https://prague-photo.example/2024" },
+        ],
+      },
+    },
+    ...[
+      ["Panel, photographs of the east side estates", "galerie.example", "2025-03-14", "Gallery page for her solo show of medium format photographs of housing blocks."],
+      ["Darkroom workshop with Mara Vell", "studionord.example", "2026-05-02", "Studio Nord lists her as the teacher of its spring darkroom workshop."],
+      ["Shortlist 2024", "prague-photo.example", "2024-11-20", "Names her among twelve shortlisted photographers for the city award."],
+      ["The people who keep the trams running", "citypaper.example", "2023-09-08", "A city paper feature built around her Depot series, with an interview."],
+    ].map(([title, source, date, summary]) => ({
+      platform: "web",
+      kind: "mention",
+      author: source,
+      text: `${title}\n\n${summary}`,
+      posted_at: `${date}T09:00:00.000Z`,
+      url: `https://${source}/${title.toLowerCase().replace(/[^a-z]+/g, "-")}`,
+      metrics: {},
+      details: { title, source, summary },
+    })),
+  );
+
   // About three years of posts, busier lately.
   const start = Date.UTC(2023, 8, 1);
   for (let t = start; t < NOW.getTime(); t += 24 * 60 * 60 * 1000) {
@@ -105,6 +193,20 @@ export function sampleDossierInput(): DossierInput {
     summary:
       "Mara photographs post-war housing and city infrastructure, mostly on film. She runs most mornings, works from home and posts in the evening after work. Her circle is small and local, mostly other photographers and a print studio.",
     interests: ["Film photography", "Brutalist architecture", "Running", "Public transport", "Print fairs"],
+    demographics: { age_range: "30 to 35", location: "Prague", occupation: "Photographer", languages: ["Czech", "English"] },
+    notable_facts: [
+      { fact: "Runs along the river most mornings before work", source_platform: "x", confidence: "high" },
+      { fact: "Prints in her own darkroom in Žižkov", source_platform: "website", confidence: "high" },
+      { fact: "Shoots mostly on a Kiev 88 medium format camera", source_platform: "instagram", confidence: "medium" },
+      { fact: "Planning to show prints at a fair in Vienna", source_platform: "x", confidence: "medium" },
+    ],
+    timeline: [
+      { date: "2017", event: "Graduated in photography from FAMU" },
+      { date: "2018", event: "Started as a photo editor at a city paper" },
+      { date: "2022", event: "Joined Studio Nord as a photographer" },
+      { date: "2023", event: "Began the Panel series on the east side housing blocks" },
+      { date: "2026", event: "Booked a train to the Vienna print fair" },
+    ],
     opinions: [
       {
         topic: "Public transport",
@@ -127,5 +229,12 @@ export function sampleDossierInput(): DossierInput {
     ],
   } as unknown as PersonaProfile;
 
-  return { jobId: "sample-mara-vell", subjectName: "Mara Vell", items, persona, now: NOW };
+  return {
+    jobId: "sample-mara-vell",
+    subjectName: "Mara Vell",
+    items,
+    persona,
+    now: NOW,
+    followed: { "linkedin:mara-vell": "their website", "instagram:mara.film": "a web search" },
+  };
 }

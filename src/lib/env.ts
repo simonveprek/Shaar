@@ -16,6 +16,8 @@ const schema = z.object({
   OPENAI_API_KEY: z.string().min(1).optional(),
   OPENAI_PERSONA_MODEL: z.string().default("gpt-6.1-sol"),
   OPENAI_CHAT_MODEL: z.string().default("gpt-6-luna"),
+  // ChatGPT web search, in discovery and as a source of every file. Defaults to OPENAI_CHAT_MODEL.
+  OPENAI_SEARCH_MODEL: z.string().optional(),
   // Candidate feedback after a practice interview. Defaults to OPENAI_PERSONA_MODEL.
   OPENAI_FEEDBACK_MODEL: z.string().optional(),
   ELEVENLABS_API_KEY: z.string().min(1).optional(),
@@ -23,6 +25,8 @@ const schema = z.object({
   ELEVENLABS_DEFAULT_VOICE_ID: z.string().min(1).optional(),
   ELEVENLABS_AGENT_LLM: z.string().default("gpt-6-luna"),
   ELEVENLABS_TTS_MODEL: z.string().default("eleven_v4_turbo"),
+  // Optional. Raises GitHub's public API limit from 60 to 5,000 requests an hour. Any token works, no scopes needed.
+  GITHUB_TOKEN: z.string().min(1).optional(),
   // Public base URL of this backend, used for Apify webhooks. Leave unset locally: runs are then polled.
   PUBLIC_API_URL: z.url().optional(),
   // Comma-separated list of frontend origins allowed to call the API.

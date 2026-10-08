@@ -64,14 +64,22 @@ export async function seedCandidates(userId: string) {
 
 const DemoPersona = z.object({ subjectName: z.string().min(1), notes: z.string().nullable(), profile: PersonaProfile });
 
+/** Demo personas: Mara Vell is fictional; Šimon is the persona from a real run on his public record. */
+const DEMO_FILES = {
+  mara: { file: ["personas", "mara-vell.json"], marker: "[fixture:demo-mara-vell]" },
+  simon: { file: ["dossiers", "simon-veprek.json"], marker: "[fixture:demo-simon-veprek]" },
+} as const;
+export type DemoWho = keyof typeof DEMO_FILES;
+
 /**
- * The demo's fictional subject, Mara Vell, as a ready persona without a candidate layer, so the demo can end in
- * a conversation with her. Owned by the visitor who asks, created once and reused after that.
+ * A demo subject as a ready persona without a candidate layer, so a demo can end in a conversation with them.
+ * Owned by the visitor who asks, created once and reused after that.
  */
-export async function seedDemoPersona(userId: string): Promise<{ personaId: string; jobId: string }> {
-  const file = path.join(process.cwd(), "fixtures", "personas", "mara-vell.json");
-  const demo = DemoPersona.parse(JSON.parse(await readFile(file, "utf8")));
-  const marker = "[fixture:demo-mara-vell]";
+export async function seedDemoPersona(userId: string, who: DemoWho = "mara"): Promise<{ personaId: string; jobId: string }> {
+  const { file, marker } = DEMO_FILES[who];
+  const raw = JSON.parse(await readFile(path.join(process.cwd(), "fixtures", ...file), "utf8"));
+  // The dossier snapshot keeps its persona under `persona`; hand-written ones under `profile`.
+  const demo = DemoPersona.parse({ notes: null, ...raw, profile: raw.profile ?? raw.persona });
   const existing = await maybeOne<{ id: string }>("select id from research_jobs where user_id = $1 and notes like $2 limit 1", [
     userId,
     `${marker}%`,

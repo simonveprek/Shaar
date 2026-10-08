@@ -23,6 +23,8 @@ export type Source = {
   items: number;
   /** Records found so far, counted live from the actor's dataset. */
   found: number;
+  /** Set when Shaar found this account itself, like "their website". */
+  via?: string | null;
 };
 
 const CAPTION = "text-[11px] font-medium tracking-[0.22em] text-muted uppercase";
@@ -47,6 +49,9 @@ const LABEL: Record<string, string> = {
   reddit: "Reddit",
   threads: "Threads",
   pinterest: "Pinterest",
+  github: "GitHub",
+  website: "Website",
+  web: "The web",
 };
 
 /** Two slow waves out of phase, so the resting light never quite repeats. 0 to 1. */
@@ -211,8 +216,11 @@ function SourceRow({ source, reduce, onRecord }: { source: Source; reduce: boole
       }}
     >
       <div className="mb-2.5 flex items-baseline justify-between gap-4">
-        <span className={cx(CAPTION, done && "text-foreground", "transition-colors duration-250 ease-smooth")}>
-          {LABEL[source.platform] ?? source.platform}
+        <span className="flex min-w-0 items-baseline gap-3">
+          <span className={cx(CAPTION, done && "text-foreground", "transition-colors duration-250 ease-smooth")}>
+            {LABEL[source.platform] ?? source.platform}
+          </span>
+          {source.via && <span className="truncate text-caption text-muted">Found through {source.via}</span>}
         </span>
         <span className={cx("text-caption tabular-nums", typeof note === "string" ? "text-muted" : "text-foreground")}>{note}</span>
       </div>

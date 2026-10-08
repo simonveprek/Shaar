@@ -9,6 +9,7 @@ import { GATE, Logo } from "@/components/logo";
 import { Card, CardBody, CardStage, cx, EASE, Icon, Kbd } from "@/components/ui";
 import { api, ApiError } from "@/lib/client";
 import type { Candidate, DiscoveryRow } from "@/lib/discovery";
+import type { DemoScript } from "./demos";
 import { FLY, Searching, SITES, type Found, type Phase } from "./searching";
 
 /*
@@ -34,45 +35,6 @@ import { FLY, Searching, SITES, type Found, type Phase } from "./searching";
 const ASH: AuraColors = ["#c8c8cc", "#5c5c63", "#9a9aa1", "#3a3a40"];
 
 const QUESTION = "Who are we looking for?";
-
-/*
- * Demo mode (/demo). The whole flow with a fictional subject, the same Mara Vell as the sample file, and no
- * API calls: her name types itself in, the search is staged, and the file is the sample. One of the accounts
- * found is a look-alike who is not her, to show why the visitor has to confirm.
- */
-const DEMO_NAME = "Mara Vell";
-const DEMO_SEARCH_MS = 5200;
-const DEMO_CANDIDATES: Candidate[] = [
-  {
-    id: "x:maravell", platform: "x", label: "X (Twitter)", handle: "maravell", url: "https://x.com/maravell",
-    title: "Mara Vell (@maravell) / X", snippet: "Photographer. Concrete, film, early trains. Prague. 2,340 followers.", match: 1,
-  },
-  {
-    id: "instagram:mara.vell", platform: "instagram", label: "Instagram", handle: "mara.vell", url: "https://instagram.com/mara.vell",
-    title: "Mara Vell (@mara.vell) • Instagram photos and videos", snippet: "4,120 followers. Film photography, housing blocks, the river at dawn.", match: 1,
-  },
-  {
-    id: "linkedin:mara-vell", platform: "linkedin", label: "LinkedIn", handle: "mara-vell", url: "https://linkedin.com/in/mara-vell",
-    title: "Mara Vell, Photographer, Prague", snippet: "Freelance architectural photographer. Prints shown at Studio Nord.", match: 1,
-  },
-  {
-    id: "reddit:vell_m", platform: "reddit", label: "Reddit", handle: "vell_m", url: "https://reddit.com/user/vell_m",
-    title: "u/vell_m (Mara Vell)", snippet: "Posts in r/AnalogCommunity, r/brutalism and r/Prague.", match: 1,
-  },
-  {
-    id: "website:mara-vell.example", platform: "website", label: "Website", handle: "mara-vell.example", url: "https://mara-vell.example",
-    title: "Mara Vell, photographs of concrete and film", snippet: "Portfolio, prints and contact. Prague.", match: 1,
-  },
-  {
-    id: "facebook:maravella.bakes", platform: "facebook", label: "Facebook", handle: "maravella.bakes", url: "https://facebook.com/maravella.bakes",
-    title: "Mara Vella Bakes | Sliema, Malta", snippet: "Family bakery in Sliema since 1998. Pastizzi every morning.", match: 0.5,
-  },
-];
-
-/** How many Google results each site gave back in the demo search. */
-const DEMO_SCANNED: Record<string, number> = {
-  instagram: 10, tiktok: 4, x: 9, linkedin: 8, youtube: 3, facebook: 10, reddit: 6, threads: 2, pinterest: 5,
-};
 
 const PURPOSES = [
   { id: "gather", title: "Gather intelligence", line: "Everything they have made public, in one file." },
@@ -123,7 +85,8 @@ const SHOT: Record<Exclude<Phase, "line" | "done">, string> = {
 /** How often to ask whether the search has finished. */
 const POLL_MS = 2500;
 
-export function Landing({ demo = false }: { demo?: boolean }) {
+/** `demo` stages the whole flow with no API calls: the name types itself, the search plays out, see src/app/demos.ts. */
+export function Landing({ demo }: { demo?: DemoScript }) {
   const reduce = useReducedMotion() ?? false;
   const [stage, setStage] = useState<Stage>("opening");
   // The opening played, so the gate and motto travel to their corners instead of fading in.
@@ -244,9 +207,9 @@ export function Landing({ demo = false }: { demo?: boolean }) {
     setShot("ask");
     setStage("searching");
     if (demo) {
-      await new Promise((r) => setTimeout(r, reduce ? 300 : DEMO_SEARCH_MS));
+      await new Promise((r) => setTimeout(r, reduce ? 300 : demo.searchMs));
       if (generation.current !== mine) return;
-      setFound({ candidates: DEMO_CANDIDATES, scanned: DEMO_SCANNED });
+      setFound({ candidates: demo.candidates, scanned: demo.scanned });
       return;
     }
     try {
@@ -298,7 +261,7 @@ export function Landing({ demo = false }: { demo?: boolean }) {
     setStage("starting");
     stirBy(STIR.choose);
     if (demo) {
-      setTimeout(() => generation.current === mine && router.push("/demo/file"), reduce ? 0 : 900);
+      setTimeout(() => generation.current === mine && router.push(demo.fileHref), reduce ? 0 : 900);
       return;
     }
     try {
@@ -431,7 +394,7 @@ export function Landing({ demo = false }: { demo?: boolean }) {
                 key="name"
                 delay={opened ? 0.7 : 0.8}
                 reduce={reduce}
-                autofill={demo ? DEMO_NAME : undefined}
+                autofill={demo?.name}
                 onType={() => stirBy(STIR.key)}
                 onAnswer={answer}
               />

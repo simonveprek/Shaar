@@ -17,6 +17,7 @@ export const PROFILE_SITES: { platform: string; site: string }[] = [
   { platform: "reddit", site: "reddit.com/user" },
   { platform: "threads", site: "threads.net" },
   { platform: "pinterest", site: "pinterest.com" },
+  { platform: "github", site: "github.com" },
 ];
 
 const RESERVED: Record<string, Set<string>> = {
@@ -24,6 +25,7 @@ const RESERVED: Record<string, Set<string>> = {
   x: new Set(["i", "home", "search", "explore", "hashtag", "intent", "share", "settings", "login", "signup", "tos", "privacy"]),
   facebook: new Set(["groups", "events", "watch", "photo", "photos", "story.php", "photo.php", "permalink.php", "pages", "marketplace", "login", "share", "sharer", "hashtag", "help", "public"]),
   pinterest: new Set(["pin", "search", "ideas", "today", "categories", "business", "about"]),
+  github: new Set(["about", "apps", "blog", "collections", "contact", "customer-stories", "enterprise", "events", "explore", "features", "issues", "join", "login", "marketplace", "new", "notifications", "orgs", "organizations", "pricing", "pulls", "readme", "resources", "search", "security", "settings", "site", "solutions", "sponsors", "team", "topics", "trending"]),
 };
 
 const clean = (s: string) => decodeURIComponent(s).replace(/^@/, "").trim();
@@ -71,6 +73,8 @@ export function parseProfileUrl(raw: string): ProfileRef | null {
       return first.startsWith("@") && parts.length === 1 ? make("threads", first) : null;
     case "pinterest.com":
       return parts.length === 1 && !RESERVED.pinterest.has(first) ? make("pinterest", first) : null;
+    case "github.com":
+      return parts.length === 1 && !RESERVED.github.has(first.toLowerCase()) ? make("github", first) : null;
     default:
       return null;
   }

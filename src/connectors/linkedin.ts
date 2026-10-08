@@ -35,6 +35,7 @@ export const linkedin: Connector = {
             text: joinText(str(raw, "headline"), str(raw, "about"), positions ? `Experience: ${positions}` : null),
             metrics: metrics(raw, { followers: ["followerCount"], connections: ["connectionsCount"] }),
             media: mediaUrls(raw, "photo"),
+            details: linkedinDetails(raw),
           }),
         ];
       },
@@ -67,3 +68,32 @@ export const linkedin: Connector = {
     },
   ],
 };
+
+type Raw = Record<string, unknown>;
+const list = (raw: Raw, ...keys: string[]) =>
+  (keys.map((k) => raw[k]).find((v) => Array.isArray(v) && v.length) ?? []) as Raw[];
+
+/** Where they work and studied, with dates, as LinkedIn states it. */
+function linkedinDetails(raw: Raw) {
+  return {
+    headline: str(raw, "headline"),
+    location: str(raw, "location.linkedinText", "location.parsed.text"),
+    work: list(raw, "experience", "currentPosition")
+      .slice(0, 8)
+      .map((e) => ({
+        role: str(e, "position", "title"),
+        company: str(e, "companyName"),
+        from: str(e, "startDate.text"),
+        to: str(e, "endDate.text"),
+      }))
+      .filter((e) => e.role || e.company),
+    education: list(raw, "education", "profileTopEducation")
+      .slice(0, 4)
+      .map((e) => ({
+        school: str(e, "schoolName", "title"),
+        degree: [str(e, "degree"), str(e, "fieldOfStudy")].filter(Boolean).join(", ") || null,
+        period: str(e, "period") ?? ([str(e, "startDate.text"), str(e, "endDate.text")].filter(Boolean).join(" to ") || null),
+      }))
+      .filter((e) => e.school),
+  };
+}

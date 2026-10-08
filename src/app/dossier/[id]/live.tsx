@@ -26,8 +26,12 @@ type Payload = {
 
 const POLL_MS = 4000;
 
-/** After the last source settles, how long the finished collection holds before the file opens. */
-const HOLD_MS = 1600;
+/**
+ * After the last source settles, how long the finished collection holds before the file opens. Long enough
+ * for the last batch to drip in (about 3.6 s in Collecting) and be seen whole; a shorter hold cut a source
+ * that landed last down to its first few records.
+ */
+const HOLD_MS = 5200;
 
 export function LiveDossier() {
   const { id } = useParams<{ id: string }>();

@@ -1,4 +1,5 @@
 import { listConnectors } from "@/connectors";
+import type { SiteDetails, SiteProject } from "@/connectors/website";
 import type { PersonaProfile } from "./persona";
 
 /*
@@ -22,6 +23,8 @@ export type DossierItem = {
   media?: string[];
   /** Links the person published in a bio. */
   links?: string[];
+  /** Facts the source stated outright (see NormalizedItem.details). */
+  details?: Record<string, unknown> | null;
 };
 
 export type DossierInput = {
@@ -31,6 +34,13 @@ export type DossierInput = {
   persona: PersonaProfile | null;
   /** When the file is compiled. Passed in so the result is reproducible. */
   now: Date;
+  /** What a reading of their photo gives away, like where it was taken. Staged in the demo for now. */
+  photoReading?: Dossier["photoReading"];
+  /**
+   * Accounts Shaar found on its own, and where the link was, like "their website". Keyed by
+   * "platform:handle", or by platform for a website.
+   */
+  followed?: Record<string, string>;
 };
 
 export type Dossier = {
@@ -61,8 +71,55 @@ export type Dossier = {
     url: string | null;
     followers: number | null;
     posts: number;
+    /** What there is to count on it: posts, or pages of a website, or repositories on GitHub. */
+    count: { value: number; unit: "posts" | "pages" | "repos" };
     lastSeen: string | null;
+    /** The account hides its posts from anyone outside it. */
+    private: boolean;
+    /** Where Shaar found the account when nobody confirmed it, like "their website". */
+    via: string | null;
   }[];
+  /** Who they are, from what their profiles and site state outright, then from what the persona read. */
+  profile: {
+    known: { label: string; value: string; source: string }[];
+    work: { role: string | null; company: string | null; when: string | null }[];
+    education: { school: string; degree: string | null; when: string | null }[];
+    facts: { text: string; platform: string; confidence: "high" | "medium" | "low" }[];
+    timeline: { date: string; event: string }[];
+  };
+  /** What their own website says. */
+  website: {
+    url: string;
+    host: string;
+    description: string | null;
+    pages: { title: string; url: string; excerpt: string }[];
+    projects: SiteProject[];
+    skills: string[];
+  } | null;
+  /**
+   * The class the system files them under, S to F, by how legible they are to it: S is fully mapped, F is a blank,
+   * and a blank is a finding of its own. It is the satire this product exists for: it scores how much a watcher
+   * has, never the person's worth.
+   */
+  assessment: {
+    grade: "S" | "A" | "B" | "C" | "D" | "F";
+    score: number;
+    line: string;
+    factors: { label: string; value: number }[];
+  };
+  /** What their photo gives away. */
+  photoReading: { label: string; value: string; relevance: number }[] | null;
+  /** What ChatGPT found about them on the open web: pages about them, and what those pages state. */
+  web: {
+    mentions: { title: string; url: string; source: string; date: string | null; summary: string | null }[];
+    facts: { text: string; url: string; source: string }[];
+  } | null;
+  /** What they build in public, from GitHub. */
+  code: {
+    repos: { name: string; description: string | null; language: string | null; stars: number; url: string | null; lastWorked: string | null }[];
+    languages: { label: string; count: number }[];
+    actions: number;
+  } | null;
   /** Posts by weekday (Monday first) and hour, in UTC. */
   routine: { grid: number[][]; peak: { day: number; hour: number; count: number } | null; busiestHours: number[] };
   /** Posts per month, oldest first, up to the last 24 months. */
@@ -75,6 +132,8 @@ export type Dossier = {
 };
 
 const LABELS = new Map(listConnectors().map((c) => [c.platform, c.label]));
+const UNIT: Record<string, "pages" | "repos"> = { website: "pages", github: "repos" };
+const COUNTED = { posts: "post", pages: "page", repos: "repo" } as const;
 const DAY = 24 * 60 * 60 * 1000;
 
 const engagement = (m: Record<string, number>) =>
@@ -98,7 +157,7 @@ const top = <T,>(map: Map<T, number>, n: number) =>
   [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 
 // Where a profile picture is most likely a clear photo of the face, best first.
-const PHOTO_ORDER = ["linkedin", "instagram", "x", "tiktok", "threads", "facebook", "youtube", "pinterest", "reddit"];
+const PHOTO_ORDER = ["linkedin", "instagram", "x", "tiktok", "threads", "facebook", "github", "youtube", "pinterest", "reddit"];
 
 /** The profile picture to show for the person, or null. */
 export function photoSource(items: DossierItem[]): string | null {
@@ -120,9 +179,15 @@ const hostOf = (url: string) => {
   }
 };
 
+/** Pages of their site, home page first: it is where a site says who they are. */
+const sitePages = (items: DossierItem[]) =>
+  items
+    .filter((i) => i.kind === "page" && i.url)
+    .sort((a, b) => new URL(a.url!).pathname.length - new URL(b.url!).pathname.length);
+
 /** Their website: a crawled site first, then a link from a bio, then a URL written in a bio. */
 function findWebsite(items: DossierItem[]): Dossier["subject"]["website"] {
-  const page = items.find((i) => i.kind === "page" && i.url);
+  const page = sitePages(items)[0];
   if (page?.url) {
     const host = hostOf(page.url);
     if (host) return { url: new URL(page.url).origin, host, title: page.author };
@@ -136,11 +201,197 @@ function findWebsite(items: DossierItem[]): Dossier["subject"]["website"] {
   return null;
 }
 
-export function buildDossier({ jobId, subjectName, items, persona, now }: DossierInput): Dossier {
-  // Pages from their website feed the persona, but they are not posts with a time, likes or a circle.
-  const posts = items.filter((i) => i.kind !== "profile" && i.kind !== "page");
+const detail = (item: DossierItem | undefined, key: string): string | null => {
+  const v = item?.details?.[key];
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+};
+
+type Work = Dossier["profile"]["work"][number];
+type School = { school: string | null; degree: string | null; period: string | null };
+
+/** Who they are. A fact a source states outright beats one the persona inferred, and says where it is from. */
+function buildProfile(items: DossierItem[], persona: PersonaProfile | null): Dossier["profile"] {
+  const of = (platform: string, kind = "profile") => items.find((i) => i.platform === platform && i.kind === kind);
+  const site = items.find((i) => i.kind === "page" && (i.details?.jobTitle || i.details?.location || i.details?.worksFor));
+  const linkedin = of("linkedin");
+  const github = of("github");
+  const work = ((linkedin?.details?.work as { role: string | null; company: string | null; from: string | null; to: string | null }[]) ?? [])
+    .map<Work>((w) => ({ role: w.role, company: w.company, when: [w.from, w.to].filter(Boolean).join(" to ") || null }));
+  const current = work.find((w) => /present/i.test(w.when ?? ""));
+
+  const known: Dossier["profile"]["known"] = [];
+  const add = (label: string, options: [string | null | undefined, string][]) => {
+    const hit = options.find(([value]) => value);
+    if (hit) known.push({ label, value: hit[0]!, source: hit[1] });
+  };
+  add("Works as", [
+    [detail(site, "jobTitle"), "Their website"],
+    [current?.role, "LinkedIn"],
+    [detail(linkedin, "headline"), "LinkedIn"],
+    [persona?.demographics?.occupation, "Read from their posts"],
+  ]);
+  add("Works at", [
+    [detail(site, "worksFor"), "Their website"],
+    [current?.company, "LinkedIn"],
+    [detail(github, "company"), "GitHub"],
+  ]);
+  add("Lives in", [
+    [detail(site, "location"), "Their website"],
+    [detail(linkedin, "location"), "LinkedIn"],
+    [detail(github, "location"), "GitHub"],
+    [persona?.demographics?.location, "Read from their posts"],
+  ]);
+  add("Age", [[persona?.demographics?.age_range, "Read from their posts"]]);
+  // Only the language names; the model sometimes explains each one ("English, used in most posts").
+  const languages = (persona?.demographics?.languages ?? []).map((l) => l.split(/\s+[—–-]\s+|\s*[(,:;]/)[0].trim());
+  add("Speaks", [[[...new Set(languages.filter((l) => l && l.length < 24))].join(", "), "Read from their posts"]]);
+
+  return {
+    known,
+    work: work.slice(0, 6),
+    education: ((linkedin?.details?.education as School[]) ?? [])
+      .filter((e): e is School & { school: string } => Boolean(e.school))
+      .map((e) => ({ school: e.school, degree: e.degree, when: e.period })),
+    facts: (persona?.notable_facts ?? []).slice(0, 8).map((f) => ({
+      text: f.fact,
+      // A fact can rest on several sources, given as "github, website".
+      platform: f.source_platform
+        .split(/\s*,\s*/)
+        .map((p) => LABELS.get(p.toLowerCase()) ?? p)
+        .join(", "),
+      confidence: f.confidence,
+    })),
+    timeline: (persona?.timeline ?? []).slice(0, 8),
+  };
+}
+
+/** Their website as they present it: what it says about them, their projects and skills, and the pages read. */
+function buildWebsite(items: DossierItem[]): Dossier["website"] {
+  const pages = sitePages(items);
+  if (!pages.length) return null;
+  const details = pages.map((p) => (p.details ?? {}) as Partial<SiteDetails>);
+  const origin = new URL(pages[0].url!).origin;
+  const projects = details
+    .flatMap((d) => d.projects ?? [])
+    .filter((p, i, all) => all.findIndex((o) => o.name.toLowerCase() === p.name.toLowerCase()) === i)
+    // The site itself is not one of its projects.
+    .filter((p) => !p.url || hostOf(p.url) !== hostOf(origin) || new URL(p.url).pathname.length > 1)
+    .slice(0, 8);
+  return {
+    url: origin,
+    host: hostOf(origin) ?? origin,
+    description: details.find((d) => d.description)?.description ?? null,
+    pages: pages.slice(0, 8).map((p) => {
+      const lines = (p.text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+      // Skip the title and description repeated at the top, and keep the first real sentence or two.
+      const body = lines.filter((l) => l !== p.author && l.length > 40).join(" ");
+      return { title: p.author ?? new URL(p.url!).pathname, url: p.url!, excerpt: body.slice(0, 220) };
+    }),
+    projects,
+    skills: [...new Set(details.flatMap((d) => d.skills ?? []))].slice(0, 16),
+  };
+}
+
+/** Pages about them and what those pages state, newest first. Their own accounts and site are not mentions. */
+function buildWeb(items: DossierItem[]): Dossier["web"] {
+  const handles = items
+    .filter((i) => i.kind === "profile" && i.author && i.platform !== "web")
+    .map((i) => i.author!.toLowerCase().replace(/^@/, ""));
+  const siteHost = sitePages(items)[0]?.url ? hostOf(sitePages(items)[0].url!) : null;
+  const theirOwn = (url: string) => {
+    const host = hostOf(url);
+    const path = (() => {
+      try {
+        return new URL(url).pathname.toLowerCase();
+      } catch {
+        return "";
+      }
+    })();
+    // A path segment that starts with one of their handles: github.com/simonveprek/fragms, linkedin.com/posts/simonveprek_...
+    return (siteHost !== null && host === siteHost) || handles.some((h) => h.length > 2 && path.split("/").some((seg) => seg === h || seg.startsWith(`${h}_`)));
+  };
+  const mentions = items
+    .filter((i) => i.kind === "mention" && i.url && !theirOwn(i.url))
+    .sort((a, b) => (b.posted_at ?? "").localeCompare(a.posted_at ?? ""))
+    .map((m) => ({
+      title: detail(m, "title") ?? m.url!,
+      url: m.url!,
+      source: detail(m, "source") ?? hostOf(m.url!) ?? "",
+      date: m.posted_at,
+      summary: detail(m, "summary"),
+    }));
+  const found = items.find((i) => i.platform === "web" && i.kind === "profile");
+  const facts = ((found?.details?.facts as { fact: string; url: string }[]) ?? []).map((f) => ({
+    text: f.fact,
+    url: f.url,
+    source: hostOf(f.url) ?? "",
+  }));
+  return mentions.length || facts.length ? { mentions: mentions.slice(0, 12), facts: facts.slice(0, 10) } : null;
+}
+
+/** What they build in public: their repositories, the languages they write, and how active they are. */
+function buildCode(items: DossierItem[]): Dossier["code"] {
+  const repos = items.filter((i) => i.kind === "repo");
+  const actions = items.filter((i) => i.kind === "activity").length;
+  if (!repos.length && !actions) return null;
+  const languages = counted(repos.map((r) => detail(r, "language")).filter((l): l is string => Boolean(l)));
+  return {
+    repos: [...repos]
+      .sort((a, b) => (b.metrics.stars ?? 0) - (a.metrics.stars ?? 0) || (b.posted_at ?? "").localeCompare(a.posted_at ?? ""))
+      .slice(0, 6)
+      .map((r) => ({
+        name: detail(r, "name") ?? r.text ?? "",
+        description: detail(r, "description"),
+        language: detail(r, "language"),
+        stars: r.metrics.stars ?? 0,
+        url: r.url,
+        lastWorked: r.posted_at,
+      })),
+    languages: top(languages, 8).map(([label, count]) => ({ label, count })),
+    actions,
+  };
+}
+
+const GRADES: { min: number; grade: Dossier["assessment"]["grade"]; line: string }[] = [
+  { min: 85, grade: "S", line: "Fully legible. Every account linked, every habit on record." },
+  { min: 70, grade: "A", line: "Highly legible. Little is left to find." },
+  { min: 55, grade: "B", line: "Legible, with gaps a watcher would want closed." },
+  { min: 40, grade: "C", line: "Partly legible. Worth a closer look." },
+  { min: 25, grade: "D", line: "Barely legible. Flagged for attention." },
+  { min: 0, grade: "F", line: "Opaque. To the system, opacity is a finding." },
+];
+
+/** The class: how much of a person the system can see, from identity, routine, record, reach and the web. */
+function assess(x: {
+  accounts: number;
+  known: number;
+  routine: number;
+  reach: number;
+  posts: number;
+  years: number;
+  mentions: number;
+}): Dossier["assessment"] {
+  const clamp = (n: number) => Math.round(Math.max(0, Math.min(100, n)));
+  const factors = [
+    { label: "Identity", value: clamp(x.accounts * 14 + x.known * 7) },
+    { label: "Routine", value: clamp((x.routine / 0.5) * 100) },
+    { label: "Record", value: clamp((Math.log10(x.posts + 1) / 2.5) * 70 + (x.years / 8) * 30) },
+    { label: "Reach", value: clamp((Math.log10(x.reach + 1) / 4) * 100) },
+    { label: "Named elsewhere", value: clamp(x.mentions * 25) },
+  ];
+  const weights = [0.3, 0.2, 0.2, 0.15, 0.15];
+  const score = clamp(factors.reduce((sum, f, i) => sum + f.value * weights[i], 0));
+  const { grade, line } = GRADES.find((g) => score >= g.min)!;
+  return { grade, score, line, factors };
+}
+
+export function buildDossier({ jobId, subjectName, items, persona, now, followed = {}, photoReading }: DossierInput): Dossier {
+  // Only things they wrote are posts. Pages, repositories and bare activity are not, though activity has a time.
+  const posts = items.filter((i) => i.kind === "post" || i.kind === "comment");
+  const actions = items.filter((i) => i.kind === "activity");
   const profiles = items.filter((i) => i.kind === "profile");
-  const dated = posts.filter((p) => p.posted_at).map((p) => ({ ...p, at: new Date(p.posted_at!) }));
+  // When they are online counts every public action with a time, like a push to GitHub at 2 am.
+  const dated = [...posts, ...actions].filter((p) => p.posted_at).map((p) => ({ ...p, at: new Date(p.posted_at!) }));
   dated.sort((a, b) => a.at.getTime() - b.at.getTime());
 
   // The subject's own handles, so they are not counted as people in their circle.
@@ -148,22 +399,32 @@ export function buildDossier({ jobId, subjectName, items, persona, now }: Dossie
     [...profiles, ...posts].map((i) => i.author?.toLowerCase().replace(/^@/, "")).filter(Boolean) as string[],
   );
 
-  // Where they are.
-  const platforms = [...new Set(items.map((i) => i.platform))];
+  // Where they are. One row per account: people keep two Instagrams. The web search is a source, not a place.
+  const platforms = [...new Set(items.map((i) => i.platform))].filter((p) => p !== "web");
   const presence = platforms
-    .map((platform) => {
-      const profile = profiles.find((p) => p.platform === platform);
-      const theirs = dated.filter((p) => p.platform === platform);
-      const site = platform === "website" ? items.find((i) => i.platform === platform && i.url)?.url : null;
-      return {
-        platform,
-        label: LABELS.get(platform) ?? platform,
-        handle: site ? hostOf(site) : (profile?.author ?? theirs[0]?.author ?? null),
-        url: profile?.url ?? null,
-        followers: profile?.metrics.followers ?? null,
-        posts: posts.filter((p) => p.platform === platform).length,
-        lastSeen: theirs.at(-1)?.posted_at ?? null,
-      };
+    .flatMap((platform) => {
+      const accounts = profiles.filter((p) => p.platform === platform);
+      const unit = UNIT[platform] ?? "posts";
+      const site = platform === "website" ? sitePages(items)[0]?.url : null;
+      return (accounts.length ? accounts : [undefined]).map((profile) => {
+        // With two accounts on a platform, each counts what its own handle posted.
+        const mine = (i: DossierItem) =>
+          i.platform === platform && (accounts.length < 2 || i.author?.toLowerCase() === profile?.author?.toLowerCase());
+        const theirs = dated.filter(mine);
+        const handle = site ? hostOf(site) : (profile?.author ?? theirs[0]?.author ?? null);
+        return {
+          platform,
+          label: LABELS.get(platform) ?? platform,
+          handle,
+          url: profile?.url ?? null,
+          followers: profile?.metrics.followers ?? null,
+          posts: posts.filter(mine).length,
+          count: { value: items.filter((i) => mine(i) && i.kind === COUNTED[unit]).length, unit },
+          lastSeen: theirs.at(-1)?.posted_at ?? null,
+          private: profile?.details?.private === true,
+          via: followed[`${platform}:${handle?.toLowerCase().replace(/^@/, "")}`] ?? followed[platform] ?? null,
+        };
+      });
     })
     .sort((a, b) => b.posts - a.posts);
 
@@ -220,7 +481,10 @@ export function buildDossier({ jobId, subjectName, items, persona, now }: Dossie
     if (!topics.some((t) => t.label.toLowerCase() === interest.toLowerCase())) topics.push({ label: interest, count: 0 });
   }
 
-  const quotes = posts
+  // With no posts to quote, the way they describe themselves on their own site is still their own words.
+  const pages = sitePages(items);
+  const quotable = posts.length ? posts : pages.map((p) => ({ ...p, text: detail(p, "description") }));
+  const quotes = quotable
     .filter((p) => (p.text ?? "").trim().length > 24)
     .map((p) => ({
       platform: LABELS.get(p.platform) ?? p.platform,
@@ -242,7 +506,11 @@ export function buildDossier({ jobId, subjectName, items, persona, now }: Dossie
   // Exposure, 0 to 100. How much a watcher has to work with, not anything about the person.
   const routineShare = dated.length ? busiestHours.reduce((s, h) => s + byHour[h], 0) / dated.length : 0;
   const factors = [
-    { label: "Volume", detail: `${posts.length} public posts`, value: Math.min(1, Math.log10(posts.length + 1) / 3) * 35 },
+    {
+      label: "Volume",
+      detail: actions.length ? `${posts.length} posts, ${actions.length} actions` : `${posts.length} public posts`,
+      value: Math.min(1, Math.log10(posts.length + actions.length + 1) / 3) * 35,
+    },
     { label: "Breadth", detail: `${platforms.length} platforms`, value: Math.min(1, platforms.length / 5) * 25 },
     { label: "History", detail: `${yearsVisible.toFixed(1)} years of posts`, value: Math.min(1, yearsVisible / 8) * 20 },
     {
@@ -252,6 +520,8 @@ export function buildDossier({ jobId, subjectName, items, persona, now }: Dossie
     },
   ];
 
+  const profile = buildProfile(items, persona);
+  const web = buildWeb(items);
   return {
     fileNumber: fileNumber(jobId),
     compiledAt: now.toISOString(),
@@ -279,5 +549,19 @@ export function buildDossier({ jobId, subjectName, items, persona, now }: Dossie
       score: Math.round(factors.reduce((s, f) => s + f.value, 0)),
       factors: factors.map((f) => ({ ...f, value: Math.round(f.value) })),
     },
+    profile,
+    website: buildWebsite(items),
+    code: buildCode(items),
+    web,
+    assessment: assess({
+      accounts: presence.length,
+      known: profile.known.length + profile.work.length,
+      routine: routineShare,
+      reach,
+      posts: posts.length + actions.length,
+      years: yearsVisible,
+      mentions: web?.mentions.length ?? 0,
+    }),
+    photoReading: photoReading ?? null,
   };
 }
