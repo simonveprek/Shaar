@@ -9,8 +9,8 @@ import { db } from "@/lib/supabase";
 export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/research/[id]/dossier">) => {
   const user = await requireUser(req);
   const { id } = await ctx.params;
-  const job = await getJob(id, user.id);
-  await advanceJob(id);
+  await getJob(id, user.id);
+  const { job, runs } = await advanceJob(id);
 
   const items = must(
     await db()
@@ -30,5 +30,18 @@ export const GET = handle(async (req: NextRequest, ctx: RouteContext<"/api/resea
     persona: persona?.status === "ready" ? persona.profile : null,
     now: new Date(),
   });
-  return Response.json({ dossier, jobStatus: job.status });
+  // One line per source, so the page can show what is still being collected.
+  const sources = [...new Set(runs.map((r) => r.platform))].map((platform) => {
+    const mine = runs.filter((r) => r.platform === platform);
+    return {
+      platform,
+      status: mine.some((r) => r.status === "running" || r.status === "ingesting")
+        ? "collecting"
+        : mine.some((r) => r.status === "succeeded")
+          ? "done"
+          : "failed",
+      items: mine.reduce((sum, r) => sum + r.item_count, 0),
+    };
+  });
+  return Response.json({ dossier, jobStatus: job.status, sources });
 });

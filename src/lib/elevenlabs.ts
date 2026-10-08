@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { env } from "./env";
+import { env, need } from "./env";
 import { HttpError } from "./http";
 import { agentSystemPrompt, type PersonaProfile } from "./persona";
 
@@ -8,7 +8,7 @@ const BASE_URL = "https://api.elevenlabs.io";
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { "xi-api-key": env().ELEVENLABS_API_KEY, "Content-Type": "application/json", ...init.headers },
+    headers: { "xi-api-key": need("ELEVENLABS_API_KEY", "ElevenLabs"), "Content-Type": "application/json", ...init.headers },
   });
   if (!res.ok) {
     const body = await res.text();
@@ -87,7 +87,7 @@ export async function textToSpeech(text: string, voiceId: string, modelId?: stri
     `${BASE_URL}/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=mp3_44100_128`,
     {
       method: "POST",
-      headers: { "xi-api-key": env().ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+      headers: { "xi-api-key": need("ELEVENLABS_API_KEY", "ElevenLabs"), "Content-Type": "application/json" },
       body: JSON.stringify({ text, model_id: modelId ?? env().ELEVENLABS_TTS_MODEL }),
     },
   );

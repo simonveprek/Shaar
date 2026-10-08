@@ -1,5 +1,5 @@
 import { db } from "./supabase";
-import { env } from "./env";
+import { need } from "./env";
 import { HttpError, maybe, must, notFound } from "./http";
 import { createPersonaAgent, getConversation, getConversationToken, getSignedUrl, updatePersonaAgent } from "./elevenlabs";
 import type { PersonaRow } from "./research";
@@ -28,7 +28,7 @@ export async function getPersona(personaId: string, userId: string): Promise<Per
 /** Ensures the persona has an ElevenLabs agent using the requested voice, creating or updating it as needed. */
 export async function ensureAgent(persona: PersonaRow, voiceId?: string): Promise<PersonaRow> {
   if (persona.status !== "ready" || !persona.profile) throw new HttpError(409, "Persona is not ready yet");
-  const voice = voiceId ?? persona.voice_id ?? env().ELEVENLABS_DEFAULT_VOICE_ID;
+  const voice = voiceId ?? persona.voice_id ?? need("ELEVENLABS_DEFAULT_VOICE_ID", "A default voice");
 
   if (persona.elevenlabs_agent_id && persona.voice_id === voice) return persona;
 

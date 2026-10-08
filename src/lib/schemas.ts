@@ -43,3 +43,8 @@ export const Tts = z.object({
   voiceId: z.string().min(1).optional().describe("ElevenLabs voice ID. Defaults to ELEVENLABS_DEFAULT_VOICE_ID."),
   modelId: z.string().min(1).optional().describe("ElevenLabs TTS model. Defaults to ELEVENLABS_TTS_MODEL."),
 });
+
+export const StartDiscovery = z.object({
+  name: z.string().trim().min(2).max(120).describe("The person's full name, as typed."),
+  purpose: z.string().trim().max(200).optional().describe("What the visitor chose to do, saved with the search and later as the job's notes."),
+});

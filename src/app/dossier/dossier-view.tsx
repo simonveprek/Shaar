@@ -66,7 +66,16 @@ function Section({
   );
 }
 
-export function DossierView({ dossier, sample = false }: { dossier: Dossier; sample?: boolean }) {
+export function DossierView({
+  dossier,
+  sample = false,
+  status,
+}: {
+  dossier: Dossier;
+  sample?: boolean;
+  /** A line in the header while the file is still being put together. */
+  status?: ReactNode;
+}) {
   const { totals, exposure } = dossier;
   const posts = useCount(totals.posts);
   const platforms = useCount(totals.platforms);
@@ -82,6 +91,7 @@ export function DossierView({ dossier, sample = false }: { dossier: Dossier; sam
             Shaar
           </Link>
           <div className="ml-auto flex items-center gap-3">
+            {status && <span className={cx(CAPTION, "shimmer hidden sm:inline")}>{status}</span>}
             <span className={cx(CAPTION, "hidden sm:inline")}>File {dossier.fileNumber}</span>
             <Status tone="strong">Simulation</Status>
           </div>

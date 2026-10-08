@@ -1,11 +1,14 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion, type TargetAndTransition } from "framer-motion";
+import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import { ArrowRight01Icon, CornerDownLeftIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { Aura, type AuraColors } from "@/components/fragms";
 import { GATE, Logo } from "@/components/logo";
 import { Card, CardBody, CardStage, cx, EASE, Icon, Kbd } from "@/components/ui";
+import { api, ApiError } from "@/lib/client";
+import type { Candidate, DiscoveryRow } from "@/lib/discovery";
 
 /*
  * Shaar. The gate. Black, one thing at a time, and light coming from under
@@ -20,7 +23,9 @@ import { Card, CardBody, CardStage, cx, EASE, Icon, Kbd } from "@/components/ui"
  *   3.30  gate and motto take their corners, the question rises
  *
  * Then: who are we looking for. The name is confirmed where it was typed and
- * the light answers. Then three cards ask what it is for.
+ * the light answers. Three cards ask what to do with them. Shaar searches the
+ * open web for their accounts, the visitor confirms which are really them,
+ * and the file opens.
  */
 
 /** Cold greys, never pure white, so the light reads as a screen left on in an empty room. */
@@ -29,9 +34,9 @@ const ASH: AuraColors = ["#c8c8cc", "#5c5c63", "#9a9aa1", "#3a3a40"];
 const QUESTION = "Who are we looking for?";
 
 const PURPOSES = [
-  { id: "prepare", title: "Prepare", line: "Rehearse the conversation before it happens." },
-  { id: "vet", title: "Vet", line: "Know who you are dealing with before you sign." },
-  { id: "understand", title: "Understand", line: "See the person behind what they post." },
+  { id: "gather", title: "Gather intelligence", line: "Everything they have made public, in one file." },
+  { id: "read", title: "Read them", line: "How they think, what they believe, how they talk." },
+  { id: "interrogate", title: "Interrogate", line: "Question a simulation built from their posts." },
 ] as const;
 type Purpose = (typeof PURPOSES)[number]["id"];
 
@@ -60,7 +65,13 @@ const CAPTION = "text-[11px] font-medium tracking-[0.22em] text-muted uppercase"
 
 const dissolve = { opacity: 0, filter: "blur(8px)", transition: { duration: 0.15, ease: EASE } };
 
-type Stage = "opening" | "name" | "confirmed" | "purpose";
+type Stage = "opening" | "name" | "confirmed" | "purpose" | "searching" | "candidates" | "starting" | "failed";
+
+/** Stages where the light thinks harder, because something is being looked for. */
+const WATCHING: Stage[] = ["confirmed", "purpose", "searching", "candidates", "starting"];
+
+/** How often to ask whether the search has finished. */
+const POLL_MS = 2500;
 
 export function Landing() {
   const reduce = useReducedMotion() ?? false;
@@ -69,6 +80,12 @@ export function Landing() {
   const opened = !reduce;
   const [subject, setSubject] = useState("");
   const [purpose, setPurpose] = useState<Purpose | null>(null);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [problem, setProblem] = useState("");
+  const router = useRouter();
+  // Bumped on every reset, so a search from an earlier name never lands on a later one.
+  const generation = useRef(0);
 
   const grid = useRef<HTMLDivElement>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
@@ -132,7 +149,7 @@ export function Landing() {
     state.at = now;
     state.energy *= Math.exp(-STIR.settle * dt);
 
-    const searching = stage === "confirmed" || stage === "purpose";
+    const searching = WATCHING.includes(stage);
     const t = now / 1000;
     const mind = searching ? think(t * 1.6) : think(t);
     const drift = RESTING * (0.7 + 0.6 * mind) + (searching ? 0.1 * mind : 0);
@@ -160,35 +177,100 @@ export function Landing() {
     setStage("confirmed");
   };
 
+  const fail = (err: unknown) => {
+    setProblem(err instanceof ApiError ? err.message : "Something went wrong");
+    setStage("failed");
+  };
+
+  // Search the open web for the name's accounts, then wait for the visitor to say which are really them.
+  const search = async (purposeId: Purpose) => {
+    const mine = ++generation.current;
+    setStage("searching");
+    try {
+      const title = PURPOSES.find((p) => p.id === purposeId)?.title;
+      let { discovery } = await api<{ discovery: DiscoveryRow }>("/api/discover", {
+        method: "POST",
+        body: JSON.stringify({ name: subject, purpose: title }),
+      });
+      while (discovery.status === "searching") {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        if (generation.current !== mine) return;
+        ({ discovery } = await api<{ discovery: DiscoveryRow }>(`/api/discover/${discovery.id}`));
+      }
+      if (generation.current !== mine) return;
+      if (discovery.status === "failed") throw new ApiError(502, "The search did not finish. Try again.");
+      if (!discovery.candidates.length) throw new ApiError(404, "Nothing public under this name");
+      setCandidates(discovery.candidates);
+      setPicked([]);
+      setStage("candidates");
+    } catch (err) {
+      if (generation.current === mine) fail(err);
+    }
+  };
+
   const choose = (id: Purpose) => {
+    if (stage !== "purpose") return;
     setPurpose(id);
     stirBy(STIR.choose);
+    // A beat with the choice lit, then the search starts.
+    setTimeout(() => search(id), reduce ? 0 : 700);
+  };
+
+  const togglePick = (id: string) => {
+    stirBy(STIR.card);
+    setPicked((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
+  };
+
+  // The confirmed accounts become the research job, and the file opens.
+  const open = async () => {
+    if (stage !== "candidates" || !picked.length) return;
+    const mine = generation.current;
+    setStage("starting");
+    stirBy(STIR.choose);
+    try {
+      const chosen = candidates.filter((c) => picked.includes(c.id));
+      const title = PURPOSES.find((p) => p.id === purpose)?.title ?? "Gather intelligence";
+      const { job } = await api<{ job: { id: string } }>("/api/research", {
+        method: "POST",
+        body: JSON.stringify({
+          subjectName: subject,
+          notes: `Purpose: ${title}.`,
+          targets: chosen.map((c) => ({ platform: c.platform, target: c.url })),
+        }),
+      });
+      if (generation.current === mine) router.push(`/dossier/${job.id}`);
+    } catch (err) {
+      if (generation.current === mine) fail(err);
+    }
   };
 
   const reset = () => {
+    generation.current++;
     setSubject("");
     setPurpose(null);
+    setCandidates([]);
+    setPicked([]);
+    setProblem("");
     setStage("name");
   };
 
   // Keys work wherever focus is. Once the field is gone, focus sits on the page, not inside it.
+  // Read through a ref, so the listener always sees the latest stage and handlers.
+  const keys = useRef<(event: KeyboardEvent) => void>(() => {});
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (stage === "opening") return setStage("name");
-      if (event.key === "Escape" && (stage === "confirmed" || stage === "purpose")) {
-        setSubject("");
-        setPurpose(null);
-        return setStage("name");
-      }
+    keys.current = (event: KeyboardEvent) => {
+      if (stage === "opening") return skipOpening();
+      if (event.key === "Escape" && stage !== "name") return reset();
+      if (event.key === "Enter" && stage === "candidates") return void open();
       const card = PURPOSES[Number(event.key) - 1];
-      if (stage === "purpose" && card) {
-        setPurpose(card.id);
-        stir.current.energy = Math.min(STIR.max, stir.current.energy + STIR.choose);
-      }
+      if (stage === "purpose" && card) choose(card.id);
     };
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => keys.current(event);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [stage]);
+  }, []);
 
   // The gate and motto in their corners. After the opening they travel there; otherwise they fade in.
   const corner = (delay: number, from: TargetAndTransition) =>
@@ -226,7 +308,7 @@ export function Landing() {
           palette={ASH}
           level={level}
           intensity={1.5}
-          speed={reduce ? 0 : stage === "confirmed" || stage === "purpose" ? 1.1 : 0.6}
+          speed={reduce ? 0 : WATCHING.includes(stage) ? 1.1 : 0.6}
           radius={0}
           className="h-full w-full"
         />
@@ -275,12 +357,52 @@ export function Landing() {
                 {/* The name never leaves. It was confirmed where it was typed and only glides up for the cards. */}
                 <motion.div layout="position" transition={{ duration: 0.9, ease: EASE }} className="flex max-w-full flex-col items-center">
                   <Subject name={subject} reduce={reduce} onConfirmed={() => (confirmedAt.current = performance.now())} onReset={reset} />
-                  <Caption text={stage === "purpose" ? "What is this for" : "Confirmed"} reduce={reduce} />
+                  <Caption
+                    text={
+                      stage === "confirmed"
+                        ? "Confirmed"
+                        : stage === "purpose"
+                          ? "What do we do with them"
+                          : stage === "searching"
+                            ? "Searching public records"
+                            : stage === "candidates"
+                              ? "Is this them"
+                              : stage === "starting"
+                                ? "Opening the file"
+                                : problem
+                    }
+                    live={stage === "searching" || stage === "starting"}
+                    reduce={reduce}
+                  />
                 </motion.div>
 
-                <AnimatePresence>
+                <AnimatePresence mode="wait">
                   {stage === "purpose" && (
-                    <Cards reduce={reduce} chosen={purpose} onChoose={choose} onHover={() => stirBy(STIR.card)} />
+                    <Cards key="purpose" reduce={reduce} chosen={purpose} onChoose={choose} onHover={() => stirBy(STIR.card)} />
+                  )}
+                  {(stage === "candidates" || stage === "starting") && (
+                    <Candidates
+                      key="candidates"
+                      reduce={reduce}
+                      candidates={candidates}
+                      picked={picked}
+                      busy={stage === "starting"}
+                      onToggle={togglePick}
+                      onOpen={open}
+                    />
+                  )}
+                  {stage === "failed" && (
+                    <motion.button
+                      key="again"
+                      type="button"
+                      onClick={reset}
+                      className={cx(CAPTION, "mt-8 cursor-pointer underline decoration-underline underline-offset-[6px] transition-colors duration-150 hover:text-foreground")}
+                      initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
+                      animate={{ opacity: 1, filter: "blur(0px)", transition: { duration: 0.4, ease: EASE } }}
+                      exit={dissolve}
+                    >
+                      Someone else
+                    </motion.button>
                   )}
                 </AnimatePresence>
               </>
@@ -481,13 +603,13 @@ function Subject({
 }
 
 /** The one line under the name. It reads Confirmed, then turns into the question the cards answer. */
-function Caption({ text, reduce }: { text: string; reduce: boolean }) {
+function Caption({ text, live = false, reduce }: { text: string; live?: boolean; reduce: boolean }) {
   return (
     <div className="relative mt-7 h-4">
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.p
           key={text}
-          className={cx("whitespace-nowrap", CAPTION)}
+          className={cx("whitespace-nowrap", CAPTION, live && "shimmer")}
           initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
           animate={{ opacity: 1, filter: "blur(0px)" }}
           exit={dissolve}
@@ -580,7 +702,7 @@ function Cards({
 
 /** What each card's stage shows. Still at rest, alive while hovered or chosen. Monochrome, like the rest. */
 function Motif({ id, live }: { id: Purpose; live: boolean }) {
-  if (id === "prepare") {
+  if (id === "interrogate") {
     // A voice. Thin bars that start to speak.
     const bars = [0.35, 0.6, 0.45, 0.8, 0.55, 1, 0.7, 0.4, 0.85, 0.5, 0.65, 0.3];
     return (
@@ -601,7 +723,7 @@ function Motif({ id, live }: { id: Purpose; live: boolean }) {
       </div>
     );
   }
-  if (id === "vet") {
+  if (id === "gather") {
     // The Spectator looking. A fine grid and a focus ring that tightens on its subject.
     return (
       <div className="absolute inset-0 grid place-items-center" aria-hidden="true">
@@ -633,5 +755,103 @@ function Motif({ id, live }: { id: Purpose; live: boolean }) {
         />
       ))}
     </div>
+  );
+}
+
+/**
+ * The accounts the search found, as Fragms cards. The visitor chooses every one
+ * that is really this person; nothing is collected until they confirm.
+ */
+function Candidates({
+  reduce,
+  candidates,
+  picked,
+  busy,
+  onToggle,
+  onOpen,
+}: {
+  reduce: boolean;
+  candidates: Candidate[];
+  picked: string[];
+  busy: boolean;
+  onToggle: (id: string) => void;
+  onOpen: () => void;
+}) {
+  return (
+    <motion.div
+      className="mt-10 flex w-full max-w-[880px] flex-col items-center"
+      initial={reduce ? false : "hidden"}
+      animate="show"
+      exit={dissolve}
+      variants={{ hidden: {}, show: { transition: { staggerChildren: 0.06, delayChildren: 0.2 } } }}
+    >
+      <div role="group" aria-label="Accounts found" className="grid w-full gap-3 sm:grid-cols-3 sm:gap-4">
+        {candidates.map((c) => {
+          const on = picked.includes(c.id);
+          return (
+            <motion.button
+              key={c.id}
+              type="button"
+              aria-pressed={on}
+              disabled={busy}
+              onClick={() => onToggle(c.id)}
+              variants={{
+                hidden: { opacity: 0, y: 18, filter: "blur(6px)" },
+                show: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: 0.7, ease: EASE } },
+              }}
+              className="cursor-pointer rounded-card text-left disabled:cursor-default"
+            >
+              <Card
+                className={cx(
+                  "h-full transition-[background-color,border-color,opacity,transform] duration-150 ease-out hover:bg-card-hover active:scale-[0.99]",
+                  on && "border-foreground/30 bg-card-hover",
+                  busy && !on && "opacity-40",
+                )}
+              >
+                <CardStage className="h-20 flex-col gap-1">
+                  <span className={CAPTION}>{c.label}</span>
+                  <span className="max-w-[90%] truncate text-[17px] font-medium tracking-[-0.01em]">@{c.handle}</span>
+                </CardStage>
+                <CardBody
+                  title={<span className="line-clamp-1">{c.title || c.label}</span>}
+                  description={<span className="line-clamp-2">{c.snippet || c.url}</span>}
+                  action={
+                    <Icon
+                      icon={on ? Tick02Icon : ArrowRight01Icon}
+                      size={16}
+                      className={cx("mr-1 shrink-0 transition-colors duration-250", on ? "text-foreground" : "text-muted")}
+                    />
+                  }
+                />
+              </Card>
+            </motion.button>
+          );
+        })}
+      </div>
+
+      {/* Enter opens the file with the chosen accounts. Shown once at least one is chosen. */}
+      <div className="mt-6 h-11">
+        <AnimatePresence>
+          {picked.length > 0 && !busy && (
+            <motion.button
+              key="open"
+              type="button"
+              onClick={onOpen}
+              className="group flex cursor-pointer items-center gap-2.5 p-2 whitespace-nowrap"
+              initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
+              animate={{ opacity: 1, filter: "blur(0px)", transition: { duration: 0.25, ease: EASE } }}
+              exit={dissolve}
+            >
+              <Kbd className="h-7 min-w-7 rounded-item px-2 transition-colors duration-150 group-hover:bg-control-hover group-hover:text-foreground">
+                <Icon icon={CornerDownLeftIcon} size={14} />
+              </Kbd>
+              <span className={cx(CAPTION, "transition-colors duration-150 group-hover:text-foreground")}>
+                Enter to open the file
+              </span>
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
   );
 }

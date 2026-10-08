@@ -109,7 +109,7 @@ async function startActorRun(
 
   try {
     const { PUBLIC_API_URL, APIFY_WEBHOOK_SECRET, APIFY_MAX_CHARGE_USD_PER_RUN } = env();
-    const webhooks = PUBLIC_API_URL
+    const webhooks = PUBLIC_API_URL && APIFY_WEBHOOK_SECRET
       ? [
           {
             eventTypes: [...WEBHOOK_EVENTS],

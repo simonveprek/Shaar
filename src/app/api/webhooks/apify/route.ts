@@ -12,6 +12,7 @@ import { db } from "@/lib/supabase";
 export const POST = handle(async (req: NextRequest) => {
   const secret = req.nextUrl.searchParams.get("secret") ?? "";
   const expected = env().APIFY_WEBHOOK_SECRET;
+  if (!expected) return Response.json({ error: "Webhooks are not set up" }, { status: 503 });
   if (secret.length !== expected.length || !timingSafeEqual(Buffer.from(secret), Buffer.from(expected))) {
     return Response.json({ error: "Invalid secret" }, { status: 401 });
   }

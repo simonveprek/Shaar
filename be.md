@@ -103,8 +103,9 @@ One agent per persona is stored in `personas.elevenlabs_agent_id`; it is deleted
 
 Base URL: `http://localhost:4000` locally, the Netlify site URL in production.
 
-**Auth:** every route except `/api/health`, `/api/connectors*` (GET) and webhooks requires
-`Authorization: Bearer <Supabase access token>` (frontend: `(await supabase.auth.getSession()).data.session.access_token`).
+**Auth:** every route except `/api/health`, `/api/connectors*` (GET) and webhooks needs a user, either
+`Authorization: Bearer <Supabase access token>` (a separate frontend with its own sign-in) or this site's
+signed `shaar_visitor` cookie, which `POST /api/discover` and `POST /api/research` create on first use.
 Users only ever see their own rows.
 
 **Errors** are always JSON `{ "error": string, "details"?: unknown }` with a proper status:
@@ -119,6 +120,8 @@ Users only ever see their own rows.
 | `GET /api/connectors` | | `{ connectors: [{ platform, label, targetHint, notes, actors: [{ actorId, role }] }] }` |
 | `GET /api/connectors/:platform` | | `{ connector }` |
 | `POST /api/connectors/:platform` | `{ target, maxPosts?, jobId?, subjectName? }` | 201 `{ job, runs }`. New job unless `jobId` given |
+| `POST /api/discover` | `{ name, purpose? }` | 201 `{ discovery }`: one Google search per platform for the name (Apify `apify/google-search-scraper`) |
+| `GET /api/discover/:id` | | `{ discovery }` with `status` searching, ready or failed and ranked `candidates` (profile links whose title matches the name, two per platform). The visitor confirms which are the person, then those go to `POST /api/research` as targets |
 | `POST /api/research` | `{ subjectName, notes?, targets: [{ platform, target, maxPosts? (1-500, default 30) }] }` (1-20 targets) | 201 `{ job, runs }` |
 | `GET /api/research` | `?limit=` (≤100) | `{ jobs: [job + personas(id, status, display_name, one_line_summary)] }` |
 | `GET /api/research/:id` | | `{ job, runs, persona, itemCounts: { [platform]: { profile?, post?, comment? } } }`; **also advances the job** |
@@ -171,6 +174,16 @@ const decoder = new TextDecoder();
 for (let r; !(r = await reader.read()).done; ) append(decoder.decode(r.value, { stream: true }));
 ```
 
+### The page flow (src/app/landing.tsx)
+
+Gate opening → name → "What do we do with them" (Gather intelligence, Read them, Interrogate) →
+`POST /api/discover` and polling → "Is this them" (the visitor picks the found accounts) →
+`POST /api/research` with the picks and the purpose as notes → `/dossier/<job id>`, which polls
+`GET /api/research/:id/dossier` and fills in as sources finish. Visitors never sign up: on the first
+`POST /api/discover` or `POST /api/research` the server creates a Supabase user for them with the secret
+key and sets a signed httpOnly `shaar_visitor` cookie (`src/lib/auth.ts`). The browser just calls
+same-origin routes (`src/lib/client.ts`).
+
 ## 7. Data model (Supabase, `public` schema)
 
 | Table | Key columns |
@@ -179,6 +192,7 @@ for (let r; !(r = await reader.read()).done; ) append(decoder.decode(r.value, { 
 | `connector_runs` | `job_id`, `platform`, `target`, `actor_id`, `input`, `apify_run_id`, `dataset_id`, `status`, `item_count`, `error` |
 | `scraped_items` | `job_id`, `run_id`, `platform`, `kind` (profile/post/comment), `external_id`, `url`, `author`, `text`, `posted_at`, `metrics` (jsonb numbers), `media` (url array), `data` (raw Apify item). Unique `(run_id, external_id)` |
 | `personas` | `job_id` (unique), `status`, `model`, `openai_response_id`, `profile` (jsonb `PersonaProfile`), `voice_id`, `elevenlabs_agent_id` |
+| `discoveries` | `name`, `purpose`, `status` (searching/ready/failed), `apify_run_id`, `candidates` (jsonb) |
 | `interviews` | `persona_id`, `elevenlabs_conversation_id` (unique), `status`, `transcript`, `analysis`, `duration_secs` |
 
 - RLS: `authenticated` users can **select** their own rows. There are **no insert/update policies**: all

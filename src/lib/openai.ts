@@ -1,9 +1,9 @@
 import OpenAI from "openai";
-import { env } from "./env";
+import { need } from "./env";
 
 let client: OpenAI | undefined;
 
 export function openai(): OpenAI {
-  client ??= new OpenAI({ apiKey: env().OPENAI_API_KEY });
+  client ??= new OpenAI({ apiKey: need("OPENAI_API_KEY", "OpenAI") });
   return client;
 }

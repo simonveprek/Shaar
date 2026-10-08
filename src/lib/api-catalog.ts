@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Chat, CreateJob, RunConnector, StartInterview, Tts } from "./schemas";
+import { Chat, CreateJob, RunConnector, StartDiscovery, StartInterview, Tts } from "./schemas";
 
 /*
  * Every public route, in one place. Powers GET /api (JSON index) and /docs (how-to page).
@@ -131,6 +131,50 @@ export const routes: RouteDoc[] = [
     response: { status: 201, example: { job, runs: [run] } },
   },
 
+  // ── Discovery
+  {
+    method: "POST",
+    path: "/api/discover",
+    group: "Discovery",
+    summary: "Find a name's public profiles",
+    description:
+      "Runs one Google search per platform for the name in quotes. Poll `GET /api/discover/:id` until `status` is `ready`, then let the visitor confirm which candidates are really the person and pass those to `POST /api/research` as targets.",
+    auth: "user",
+    body: StartDiscovery,
+    bodyExample: { name: "Jane Doe", purpose: "Gather intelligence" },
+    response: { status: 201, example: { discovery: { id: "d81a…", name: "Jane Doe", status: "searching", candidates: [] } } },
+  },
+  {
+    method: "GET",
+    path: "/api/discover/:id",
+    group: "Discovery",
+    summary: "Candidate profiles for a name",
+    description: "Each call checks the search. Candidates are profile links whose title matches the name, at most two per platform, closest first.",
+    auth: "user",
+    params: { id: "Discovery ID" },
+    response: {
+      status: 200,
+      example: {
+        discovery: {
+          id: "d81a…",
+          status: "ready",
+          candidates: [
+            {
+              id: "instagram:janedoe",
+              platform: "instagram",
+              label: "Instagram",
+              handle: "janedoe",
+              url: "https://instagram.com/janedoe",
+              title: "Jane Doe (@janedoe) • Instagram photos and videos",
+              snippet: "1,204 followers…",
+              match: 1,
+            },
+          ],
+        },
+      },
+    },
+  },
+
   // ── Research
   {
     method: "POST",
@@ -243,6 +287,7 @@ export const routes: RouteDoc[] = [
       status: 200,
       example: {
         jobStatus: "ready",
+        sources: [{ platform: "instagram", status: "done", items: 31 }],
         dossier: {
           fileNumber: "0417-K",
           subject: { name: "Mara Vell", oneLine: "Film photographer in Prague…" },
