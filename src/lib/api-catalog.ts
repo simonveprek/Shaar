@@ -71,7 +71,7 @@ export const routes: RouteDoc[] = [
     group: "Basics",
     summary: "This index of every route",
     auth: "none",
-    response: { status: 200, example: { name: "Projstalker API", docs: "/docs", routes: ["…"] } },
+    response: { status: 200, example: { name: "Shaar API", docs: "/docs", routes: ["…"] } },
   },
   {
     method: "GET",

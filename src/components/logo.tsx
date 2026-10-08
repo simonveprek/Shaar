@@ -1,7 +1,7 @@
 import type { SVGProps } from "react";
 
-/** The Projstalker mark (tir.svg). Draws in the current text colour, so it follows the theme tokens. */
-export function Logo({ title = "Projstalker", ...props }: SVGProps<SVGSVGElement> & { title?: string }) {
+/** The Shaar mark, a gate (tir.svg). Draws in the current text colour, so it follows the theme tokens. */
+export function Logo({ title = "Shaar", ...props }: SVGProps<SVGSVGElement> & { title?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="306.0 204.0 641.5 877.0" role="img" aria-label={title} {...props}>
       <path

@@ -1,6 +1,6 @@
-# Projstalker: instructions for agents
+# Shaar: instructions for agents
 
-Projstalker is a social media deep research app: it scrapes a person's public profiles (Apify), builds a
+The product is called **Shaar** (tagline: Beware the Spectator; the repo is still `projstalker`). It is a social media deep research app: it scrapes a person's public profiles (Apify), builds a
 persona of them (OpenAI), and lets users hold a simulated voice interview with it (ElevenLabs).
 This repo is the **backend** (Next.js API routes on Netlify, data in Supabase).
 

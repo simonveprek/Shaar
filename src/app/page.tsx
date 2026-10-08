@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Landing } from "./landing";
 
 export const metadata: Metadata = {
-  title: { absolute: "Projstalker" },
-  description: "Type a name. See what the internet knows.",
+  title: { absolute: "Shaar" },
+  description: "Beware the Spectator.",
 };
 
 export default function Home() {

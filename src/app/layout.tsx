@@ -9,8 +9,8 @@ const sans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 
 export const metadata: Metadata = {
-  title: { default: "Projstalker API", template: "%s · Projstalker" },
-  description: "Backend for the Projstalker social media deep research app",
+  title: { default: "Shaar", template: "%s · Shaar" },
+  description: "Beware the Spectator.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

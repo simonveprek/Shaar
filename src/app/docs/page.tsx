@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import type { ReactNode } from "react";
+import { Logo } from "@/components/logo";
 import { Badge, Button, CodeBlock, Panel, SectionHeader, Text, ThemeToggle } from "@/components/ui";
 import { bodyFields, routes, type Auth, type RouteDoc } from "@/lib/api-catalog";
 import { DocsMobileNav, DocsSidebar, type DocsNavSection } from "./docs-nav";
 
 export const metadata: Metadata = {
   title: "API docs",
-  description: "Every Projstalker API route, with examples.",
+  description: "Every Shaar API route, with examples.",
 };
 
 const anchor = (r: RouteDoc) => `${r.method}-${r.path}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "");
@@ -193,9 +195,10 @@ export default function DocsPage() {
     <>
       <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-[1400px] items-center gap-3 px-4 sm:px-5 md:px-8">
-          <a href="#top" className="text-[15px] font-medium">
-            Projstalker
-          </a>
+          <Link href="/" className="flex items-center gap-2.5 text-[15px] font-medium">
+            <Logo className="h-5 w-auto" />
+            Shaar
+          </Link>
           <Badge>API</Badge>
           <div className="ml-auto flex items-center gap-2">
             <Button href="/api" variant="ghost" size="sm">
@@ -219,7 +222,7 @@ export default function DocsPage() {
         <main className="min-w-0 max-w-[920px]">
           <SectionHeader
             as="h1"
-            title="Projstalker API"
+            title="Shaar API"
             description="Scrape someone's public profiles, turn them into a persona and interview that persona by voice. Every route is below with a request you can copy."
           />
           <Text size="label" tone="muted" className="mt-4">
