@@ -15,6 +15,13 @@
   with OpenAI for reading and searching.
 </p>
 
+<p align="center">
+  <a href="https://github.com/simonveprek/projstalker/actions/workflows/ci.yml"><img src="https://github.com/simonveprek/projstalker/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/scraping-Apify-0d0d0d" alt="Apify" />
+  <img src="https://img.shields.io/badge/voice-ElevenLabs-0d0d0d" alt="ElevenLabs" />
+  <img src="https://img.shields.io/badge/Next.js-16-0d0d0d" alt="Next.js 16" />
+</p>
+
 ---
 
 Shaar is a simulation of what an oppressive government, or anyone patient enough, could put together about an
@@ -43,6 +50,30 @@ projects and views. When the call ends, ElevenLabs sends the transcript back to 
 
 Both teams built platforms that let a small team ship something this complete in one night. Thank you.
 
+## See it
+
+Recorded from `/demo/simon`, which stages the whole flow for one of us from his real public record.
+
+**1. Find.** The name types itself in, you say what you are here for, and the search fans out across ten sites
+at once. What comes back is sieved down to the accounts that are really them, including a second Instagram that
+Google never returns.
+
+<p align="center"><img src="docs/media/search.gif" width="760" alt="The search" /></p>
+
+**2. Collect.** Every source fills in record by record as Apify finds them. LinkedIn and GitHub were never
+searched for: they were found through his website.
+
+<p align="center"><img src="docs/media/collecting.gif" width="760" alt="Collecting public records" /></p>
+
+**3. The file.** Who he is, where his photo was taken, his work and schooling, his website, what the web says about
+him, his code, when he is online and his citizen class.
+
+<p align="center"><img src="docs/media/file.gif" width="720" alt="Scrolling through the file" /></p>
+
+**4. Interrogate.** One button, and an ElevenLabs agent speaking as him, labelled a simulation.
+
+<p align="center"><img src="docs/media/room.gif" width="760" alt="The call room" /></p>
+
 ## Contents
 
 - [What it does](#what-it-does)
@@ -54,6 +85,7 @@ Both teams built platforms that let a small team ship something this complete in
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
 - [API](#api)
+- [CI/CD](#cicd)
 - [Architecture](#architecture)
 - [Project structure](#project-structure)
 - [Design](#design)
@@ -340,6 +372,21 @@ model and rules for contributors are in [`be.md`](be.md).
 | POST | `/api/ai/chat` | Streamed chat, grounded in a file with `jobId` |
 | POST | `/api/voice/tts` | ElevenLabs text to speech |
 | POST | `/api/webhooks/apify`, `/api/webhooks/elevenlabs` | Run finished, call finished |
+
+## CI/CD
+
+GitHub Actions, in [`.github/workflows`](.github/workflows):
+
+- **CI** ([`ci.yml`](.github/workflows/ci.yml)) runs on every push to `main` and every pull request: `npm ci`,
+  typecheck, lint, the test suite and a production build, on Node 22 with the npm and Next.js caches. No secrets
+  are needed: every service is optional at build time and the tests are pure.
+- **Release** ([`release.yml`](.github/workflows/release.yml)) runs on a version tag. It runs the whole CI first,
+  then publishes a GitHub release with notes generated from the commits and the source as an archive. Shaar runs
+  on localhost, so a release is what people download and run.
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
 
 ## Architecture
 

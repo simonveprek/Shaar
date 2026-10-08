@@ -1,0 +1,32 @@
+# Delivery. Push a version tag (git tag v1.0.0 && git push --tags): the full CI runs, then a GitHub
+# release is published with notes from the commits since the last tag and the source as an archive.
+# Shaar runs on localhost, so the release is what people download and run.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish the release
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pack the source
+        run: git archive --format=tar.gz --prefix="shaar-${GITHUB_REF_NAME}/" -o "shaar-${GITHUB_REF_NAME}.tar.gz" "${GITHUB_REF_NAME}"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" "shaar-${GITHUB_REF_NAME}.tar.gz" --title "Shaar ${GITHUB_REF_NAME}" --generate-notes --verify-tag
