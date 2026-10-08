@@ -62,7 +62,10 @@ export function parseProfileUrl(raw: string): ProfileRef | null {
       if (first === "profile.php" && url.searchParams.get("id")) return make("facebook", url.searchParams.get("id")!);
       return parts.length === 1 && !RESERVED.facebook.has(first.toLowerCase()) ? make("facebook", first) : null;
     case "reddit.com":
-      return (first === "user" || first === "u") && parts[1] ? make("reddit", parts[1]) : null;
+      // A user's own page, not one of their posts (/user/name/comments/...).
+      return (first === "user" || first === "u") && parts[1] && parts.length <= 3 && parts[2] !== "comments"
+        ? make("reddit", parts[1])
+        : null;
     case "threads.net":
     case "threads.com":
       return first.startsWith("@") && parts.length === 1 ? make("threads", first) : null;

@@ -17,7 +17,7 @@ import { DossierView } from "../dossier-view";
  * finish and the persona is written.
  */
 
-type Source = { platform: string; status: "collecting" | "done" | "failed"; items: number };
+export type Source = { platform: string; status: "collecting" | "done" | "failed"; items: number };
 type Payload = { dossier: Dossier; jobStatus: "scraping" | "analyzing" | "ready" | "failed"; sources: Source[] };
 
 const CAPTION = "text-[11px] font-medium tracking-[0.22em] text-muted uppercase";
@@ -38,7 +38,6 @@ const LABEL: Record<string, string> = {
 
 export function LiveDossier() {
   const { id } = useParams<{ id: string }>();
-  const reduce = useReducedMotion() ?? false;
   const [data, setData] = useState<Payload | null>(null);
   const [problem, setProblem] = useState("");
 
@@ -76,6 +75,32 @@ export function LiveDossier() {
 
   const failed = data?.jobStatus === "failed";
   return (
+    <Collecting
+      name={data?.dossier.subject.name}
+      sources={problem ? [] : (data?.sources ?? [])}
+      message={problem || (failed ? "Nothing could be collected" : "Collecting public records")}
+      busy={!problem && !failed}
+      showBack={Boolean(problem || failed)}
+    />
+  );
+}
+
+/** While a file is being put together: the name, what is being collected, and the light under the gate. */
+export function Collecting({
+  name,
+  sources,
+  message,
+  busy,
+  showBack = false,
+}: {
+  name?: string;
+  sources: Source[];
+  message: string;
+  busy: boolean;
+  showBack?: boolean;
+}) {
+  const reduce = useReducedMotion() ?? false;
+  return (
     <main className="dark relative grid min-h-svh place-items-center overflow-x-clip bg-background px-6 text-foreground">
       <div
         aria-hidden="true"
@@ -95,26 +120,29 @@ export function LiveDossier() {
         animate={{ opacity: 1, filter: "blur(0px)" }}
         transition={{ duration: 0.9, ease: EASE }}
       >
-        <h1 className="text-[clamp(1.5rem,5vw,3.5rem)] leading-none font-medium tracking-[-0.04em]">
-          {data?.dossier.subject.name ?? " "}
-        </h1>
-        <p className={cx("mt-7", CAPTION, !problem && !failed && "shimmer")}>
-          {problem || (failed ? "Nothing could be collected" : "Collecting public records")}
-        </p>
+        <h1 className="text-[clamp(1.5rem,5vw,3.5rem)] leading-none font-medium tracking-[-0.04em]">{name ?? "\u00a0"}</h1>
+        <p className={cx("mt-7", CAPTION, busy && "shimmer")}>{message}</p>
 
-        {data && data.sources.length > 0 && !problem && (
+        {sources.length > 0 && (
           <ul className="mt-10 flex flex-col gap-2.5">
-            {data.sources.map((s) => (
+            {sources.map((s) => (
               <li key={s.platform} className="flex items-center justify-center gap-3 text-label">
-                <span className={cx("size-1.5 rounded-full", s.status === "done" ? "bg-foreground" : s.status === "failed" ? "bg-control" : "animate-pulse bg-muted")} />
+                <span
+                  className={cx(
+                    "size-1.5 rounded-full transition-colors duration-250",
+                    s.status === "done" ? "bg-foreground" : s.status === "failed" ? "bg-control" : "animate-pulse bg-muted",
+                  )}
+                />
                 <span className={s.status === "failed" ? "text-muted line-through" : ""}>{LABEL[s.platform] ?? s.platform}</span>
-                <span className="text-muted tabular-nums">{s.status === "done" ? `${s.items} records` : s.status === "failed" ? "unavailable" : "collecting"}</span>
+                <span className="text-muted tabular-nums">
+                  {s.status === "done" ? `${s.items} records` : s.status === "failed" ? "unavailable" : "collecting"}
+                </span>
               </li>
             ))}
           </ul>
         )}
 
-        {(problem || failed) && (
+        {showBack && (
           <Link href="/" className={cx(CAPTION, "mt-8 underline decoration-underline underline-offset-[6px] transition-colors duration-150 hover:text-foreground")}>
             Someone else
           </Link>
