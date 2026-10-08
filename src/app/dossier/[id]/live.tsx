@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { Aura, type AuraColors } from "@/components/fragms";
@@ -35,7 +36,8 @@ const LABEL: Record<string, string> = {
   pinterest: "Pinterest",
 };
 
-export function LiveDossier({ id }: { id: string }) {
+export function LiveDossier() {
+  const { id } = useParams<{ id: string }>();
   const reduce = useReducedMotion() ?? false;
   const [data, setData] = useState<Payload | null>(null);
   const [problem, setProblem] = useState("");
