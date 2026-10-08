@@ -1,3 +1,4 @@
+import { HttpError } from "@/lib/http";
 import type { NormalizedItem } from "./types";
 
 type Raw = Record<string, unknown>;
@@ -80,25 +81,30 @@ export function cleanHandle(target: string): string {
 
 export const isUrl = (target: string) => /^https?:\/\//i.test(target.trim());
 
-/** Extracts the username from a URL like https://www.instagram.com/<user>/ or returns the cleaned handle. */
+/**
+ * Extracts the username from a URL like https://www.instagram.com/<user>/ or returns the cleaned handle.
+ * Throws a 400 when the target is not a valid URL or has no username in it.
+ */
 export function handleFrom(target: string, pathPrefix = ""): string {
-  if (!isUrl(target)) return cleanHandle(target);
-  const url = new URL(target.trim());
-  const segments = url.pathname.split("/").filter(Boolean);
-  const prefixSegments = pathPrefix.split("/").filter(Boolean);
-  const rest = segments.slice(prefixSegments.length);
-  return cleanHandle(rest[0] ?? "");
+  let handle: string;
+  if (isUrl(target)) {
+    let url: URL;
+    try {
+      url = new URL(target.trim());
+    } catch {
+      throw new HttpError(400, `"${target}" is not a valid URL`);
+    }
+    const prefixSegments = pathPrefix.split("/").filter(Boolean);
+    handle = cleanHandle(url.pathname.split("/").filter(Boolean).slice(prefixSegments.length)[0] ?? "");
+  } else {
+    handle = cleanHandle(target);
+  }
+  if (!handle) throw new HttpError(400, `No username found in "${target}"`);
+  return handle;
 }
 
 /** Stable id for the profile item of a handle, so profile data from several actors/items dedupes. */
 export const profileId = (handle: string | null | undefined) => `profile:${(handle ?? "unknown").toLowerCase()}`;
-
-/** Normalizes a profile URL or handle into a full URL on the given site. */
-export function toUrl(target: string, base: string): string {
-  if (isUrl(target)) return target.trim();
-  return `${base}${cleanHandle(target)}/`;
-}
-
 
 /** Builds a NormalizedItem, filling defaults. */
 export function item(fields: Partial<NormalizedItem> & Pick<NormalizedItem, "kind" | "externalId">): NormalizedItem {

@@ -48,7 +48,8 @@ function curl(r: RouteDoc): string {
   if (r.auth === "user") lines.push(`  -H "Authorization: Bearer $TOKEN"`);
   if (r.body) {
     lines.push(`  -H "Content-Type: application/json"`);
-    lines.push(`  -d '${JSON.stringify(r.bodyExample ?? {})}'`);
+    // A quote can't be escaped inside shell single quotes, so each one becomes: close, escaped quote, reopen.
+    lines.push(`  -d '${JSON.stringify(r.bodyExample ?? {}).replaceAll("'", `'\\''`)}'`);
   }
   return lines.join(" \\\n");
 }

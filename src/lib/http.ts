@@ -55,7 +55,15 @@ export function maybe<T>(result: DbResult<T>): T | null {
   return result.data;
 }
 
-/** Throws on a database error; for writes whose result isn't needed. */
+/** Throws on a database error; for writes whose result isn't needed. The detail is logged, not sent to the client. */
 export function check(result: { error: { message: string } | null }): void {
-  if (result.error) throw new HttpError(500, `Database error: ${result.error.message}`);
+  if (!result.error) return;
+  console.error("Database error:", result.error.message);
+  throw new HttpError(500, "Database error");
+}
+
+/** Reads an integer query parameter. Missing or non-numeric values give the fallback; others are clamped to the range. */
+export function intParam(value: string | null, { fallback, min, max }: { fallback: number; min: number; max: number }): number {
+  const n = value === null || value.trim() === "" ? NaN : Math.trunc(Number(value));
+  return Number.isFinite(n) ? Math.min(Math.max(n, min), max) : fallback;
 }

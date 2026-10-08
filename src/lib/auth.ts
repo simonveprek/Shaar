@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { db } from "./supabase";
 import { HttpError } from "./http";
 
@@ -15,4 +16,11 @@ export async function requireUser(req: Request): Promise<AuthUser> {
   const { data, error } = await db().auth.getUser(token);
   if (error || !data.user) throw new HttpError(401, "Invalid or expired token");
   return { id: data.user.id, email: data.user.email };
+}
+
+/** Constant-time string comparison for shared secrets. Safe for values of different length or non-ASCII text. */
+export function secretsMatch(given: string, expected: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
 }

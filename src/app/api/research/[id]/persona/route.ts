@@ -12,6 +12,6 @@ export const POST = handle(async (req: NextRequest, ctx: RouteContext<"/api/rese
   if (job.status === "scraping") throw new HttpError(409, "Wait for scraping to finish first");
 
   const persona = await generatePersona(job);
-  check(await db().from("research_jobs").update({ status: "analyzing", error: null }).eq("id", id));
+  check(await db().from("research_jobs").update({ status: "analyzing", error: null }).eq("id", id).eq("user_id", user.id));
   return Response.json({ persona }, { status: 202 });
 });

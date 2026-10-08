@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { RunConnector } from "@/lib/schemas";
 import { handle, must, readJson } from "@/lib/http";
 import { getConnector, describeConnector } from "@/connectors";
-import { createJob, getJob, startConnector, type JobRow } from "@/lib/research";
+import { checkTarget, createJob, getJob, startConnector, type JobRow } from "@/lib/research";
 import { db } from "@/lib/supabase";
 
 /** Details for one connector. */
@@ -21,6 +21,7 @@ export const POST = handle(async (req: NextRequest, ctx: RouteContext<"/api/conn
   const { platform } = await ctx.params;
   getConnector(platform);
   const body = await readJson(req, RunConnector);
+  checkTarget({ platform, target: body.target, maxPosts: body.maxPosts });
 
   if (!body.jobId) {
     const result = await createJob(user.id, {
@@ -30,15 +31,18 @@ export const POST = handle(async (req: NextRequest, ctx: RouteContext<"/api/conn
     return Response.json(result, { status: 201 });
   }
 
-  await getJob(body.jobId, user.id);
+  const existing = await getJob(body.jobId, user.id);
+  // Start the runs before reopening the job. Otherwise a poll in between would see only the old, finished
+  // runs, move on to analysis, and never look at the new ones.
+  const runs = await startConnector(existing, { platform, target: body.target, maxPosts: body.maxPosts });
   const job = must(
     await db()
       .from("research_jobs")
       .update({ status: "scraping", error: null })
-      .eq("id", body.jobId)
+      .eq("id", existing.id)
+      .eq("user_id", user.id)
       .select()
       .single<JobRow>(),
   );
-  const runs = await startConnector(job, { platform, target: body.target, maxPosts: body.maxPosts });
   return Response.json({ job, runs }, { status: 201 });
 });

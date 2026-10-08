@@ -1,8 +1,7 @@
 import type { Connector, NormalizedItem } from "./types";
-import { cleanHandle, date, isUrl, item, joinText, mediaUrls, metrics, profileId, str } from "./util";
+import { date, handleFrom, isUrl, item, joinText, mediaUrls, metrics, profileId, str } from "./util";
 
-const channelUrl = (target: string) =>
-  isUrl(target) ? target.trim() : `https://www.youtube.com/@${cleanHandle(target)}`;
+const channelUrl = (target: string) => (isUrl(target) ? target.trim() : `https://www.youtube.com/@${handleFrom(target)}`);
 
 export const youtube: Connector = {
   platform: "youtube",

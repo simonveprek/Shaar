@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
+import { secretsMatch } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { handle, maybe } from "@/lib/http";
 import { advanceJob, type RunRow } from "@/lib/research";
@@ -11,8 +11,7 @@ import { db } from "@/lib/supabase";
  */
 export const POST = handle(async (req: NextRequest) => {
   const secret = req.nextUrl.searchParams.get("secret") ?? "";
-  const expected = env().APIFY_WEBHOOK_SECRET;
-  if (secret.length !== expected.length || !timingSafeEqual(Buffer.from(secret), Buffer.from(expected))) {
+  if (!secretsMatch(secret, env().APIFY_WEBHOOK_SECRET)) {
     return Response.json({ error: "Invalid secret" }, { status: 401 });
   }
 

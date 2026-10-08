@@ -25,17 +25,19 @@ export async function getPersona(personaId: string, userId: string): Promise<Per
   return persona;
 }
 
-/** Ensures the persona has an ElevenLabs agent using the requested voice, creating or updating it as needed. */
+/**
+ * Ensures the persona has an ElevenLabs agent using the requested voice. An existing agent is always
+ * updated from the current profile, so a regenerated persona never speaks from its old prompt.
+ */
 export async function ensureAgent(persona: PersonaRow, voiceId?: string): Promise<PersonaRow> {
   if (persona.status !== "ready" || !persona.profile) throw new HttpError(409, "Persona is not ready yet");
   const voice = voiceId ?? persona.voice_id ?? env().ELEVENLABS_DEFAULT_VOICE_ID;
-
-  if (persona.elevenlabs_agent_id && persona.voice_id === voice) return persona;
 
   let agentId = persona.elevenlabs_agent_id;
   if (agentId) await updatePersonaAgent(agentId, persona.profile, voice);
   else agentId = await createPersonaAgent(persona.profile, voice);
 
+  if (agentId === persona.elevenlabs_agent_id && voice === persona.voice_id) return persona;
   return must(
     await db()
       .from("personas")
@@ -104,7 +106,8 @@ export async function applyConversation(
 ): Promise<InterviewRow> {
   const status: InterviewRow["status"] =
     convo.status === "done" ? "done" : convo.status === "failed" ? "failed" : "active";
-  return must(
+  // A finished interview is final: a late poll or a repeated webhook must not move it back to active.
+  const updated = maybe(
     await db()
       .from("interviews")
       .update({
@@ -115,7 +118,9 @@ export async function applyConversation(
         ended_at: status === "done" || status === "failed" ? new Date().toISOString() : null,
       })
       .eq("id", interviewId)
+      .in("status", ["pending", "active"])
       .select()
-      .single<InterviewRow>(),
+      .maybeSingle<InterviewRow>(),
   );
+  return updated ?? must(await db().from("interviews").select().eq("id", interviewId).single<InterviewRow>());
 }

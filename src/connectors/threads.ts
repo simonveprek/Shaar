@@ -11,7 +11,7 @@ export const threads: Connector = {
       role: "posts",
       buildInput: (target, { maxPosts }) => ({
         mode: "user",
-        usernames: [handleFrom(target).replace(/^@/, "")],
+        usernames: [handleFrom(target)],
         max_posts: Math.max(10, maxPosts), // actor minimum is 10
       }),
       maxItems: ({ maxPosts }) => Math.max(10, maxPosts),

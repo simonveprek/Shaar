@@ -80,8 +80,13 @@ Status values:
 | `personas.status` | `generating` → `ready` \| `failed` |
 | `interviews.status` | `pending` → `active` → `done` \| `failed` |
 
-Adding a source to an existing job (`POST /api/connectors/:platform` with `jobId`) sets the job back to
-`scraping`; when the new runs finish, the persona is regenerated from all data.
+Adding a source to an existing job (`POST /api/connectors/:platform` with `jobId`) starts the new runs
+first, then sets the job back to `scraping` (the other order lets a poll slip in and skip the new runs).
+When they finish, the persona is regenerated from all data.
+
+If a function dies right after claiming a job for analysis, `advanceJob` notices the job has sat in
+`analyzing` for 2 minutes with no persona generating and starts the persona again (`updated_at` is the
+claim version, so concurrent pollers can't both restart it).
 
 ## 5. Interview lifecycle
 
@@ -97,7 +102,9 @@ Call ends ─► POST /api/webhooks/elevenlabs (HMAC-verified) ┐
 Frontend  ─► GET /api/interviews/:id                         ┴─► transcript + analysis saved (done)
 ```
 
-One agent per persona is stored in `personas.elevenlabs_agent_id`; it is deleted with the job.
+One agent per persona is stored in `personas.elevenlabs_agent_id`; it is deleted with the job. The agent
+is updated from the current profile on every interview start, so a regenerated persona never talks from its
+old prompt.
 
 ## 6. API reference
 
@@ -224,9 +231,15 @@ Conventions:
   expected failures. Don't catch and return errors by hand.
 - **Supabase results**: `must(...)` when a row must exist, `maybe(...)` with `.maybeSingle()`,
   `check(...)` for writes whose result you don't use. Don't destructure `{ data, error }` manually.
+  Database error text is logged, never sent to the client. A single response holds at most 1000 rows, so
+  page with `.range()` (see `countItems`) when you need more.
+- **Query parameters**: read numbers with `intParam` so `?limit=abc` falls back instead of causing a 500.
+- **Secrets in requests** (webhook secrets) are compared with `secretsMatch`, never `===`.
+- **Connector targets**: `handleFrom` throws a 400 for an empty or malformed target, and `createJob` /
+  `POST /api/connectors/:platform` check every target (`checkTarget`) before anything is written.
 - **Env**: add new variables to the schema in `src/lib/env.ts` **and** to `.env.example`. Never read
   `process.env` directly elsewhere (except `src/proxy.ts`). Secrets never go to the browser.
-- **Verify before shipping**: `npm run typecheck`, `npm run lint`, `npm run build`.
+- **Verify before shipping**: `npm run typecheck`, `npm run lint`, `npm run build` (`bun run` works too).
 
 ### Adding or changing a platform connector
 
@@ -259,6 +272,14 @@ the build succeeds without them.
 - **X** needs a paid Apify plan (free plan = demo mode, 10 items). **Facebook** works for pages, not
   personal profiles. **YouTube** channel listings can have relative dates (stored as null).
 - **No caching** of scrapes across jobs yet: researching the same handle twice pays twice.
+- **A run stuck in `ingesting`** (the function died mid-ingest) is never retried, and it keeps its job in
+  `scraping`. `connector_runs` has no claim timestamp to detect it; add one in a migration, then reclaim
+  runs older than a few minutes (ingest is idempotent).
+- **Deleting a job doesn't abort its Apify runs**; they finish and bill up to `APIFY_MAX_CHARGE_USD_PER_RUN`.
+- **No rate limit** on `/api/voice/tts`, `/api/ai/chat` or job creation; any signed-in user can spend the
+  OpenAI, ElevenLabs and Apify budgets.
+- Two interviews started at the same instant on a persona with no agent yet can create two ElevenLabs
+  agents; one is left unused.
 - No automated tests yet; connector normalizers are the best place to start (pure functions).
 - Interviews use stock ElevenLabs voices. Don't add voice cloning of the real person without their consent.
 

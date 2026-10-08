@@ -1,8 +1,7 @@
 import type { Connector } from "./types";
-import { date, isUrl, item, joinText, mediaUrls, metrics, profileId, str, cleanHandle } from "./util";
+import { date, handleFrom, isUrl, item, joinText, mediaUrls, metrics, profileId, str } from "./util";
 
-const pageUrl = (target: string) =>
-  isUrl(target) ? target.trim() : `https://www.facebook.com/${cleanHandle(target)}/`;
+const pageUrl = (target: string) => (isUrl(target) ? target.trim() : `https://www.facebook.com/${handleFrom(target)}/`);
 
 export const facebook: Connector = {
   platform: "facebook",

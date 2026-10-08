@@ -10,7 +10,7 @@ export const tiktok: Connector = {
       actorId: "clockworks/tiktok-profile-scraper",
       role: "posts",
       buildInput: (target, { maxPosts }) => ({
-        profiles: [handleFrom(target).replace(/^@/, "")],
+        profiles: [handleFrom(target)],
         resultsPerPage: maxPosts,
         profileSorting: "latest",
         profileScrapeSections: ["videos"],

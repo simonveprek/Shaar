@@ -31,7 +31,7 @@ export const POST = handle(async (req: Request) => {
   });
 
   const encoder = new TextEncoder();
-  const body$ = new ReadableStream<Uint8Array>({
+  const readable = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
         for await (const event of stream) {
@@ -48,7 +48,7 @@ export const POST = handle(async (req: Request) => {
     },
   });
 
-  return new Response(body$, {
+  return new Response(readable, {
     headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
   });
 });

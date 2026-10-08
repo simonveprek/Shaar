@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { CreateJob } from "@/lib/schemas";
-import { handle, must, readJson } from "@/lib/http";
+import { handle, intParam, must, readJson } from "@/lib/http";
 import { createJob } from "@/lib/research";
 import { db } from "@/lib/supabase";
 
@@ -15,8 +15,7 @@ export const POST = handle(async (req: Request) => {
 /** List the user's research jobs, newest first. */
 export const GET = handle(async (req: Request) => {
   const user = await requireUser(req);
-  const url = new URL(req.url);
-  const limit = Math.min(Number(url.searchParams.get("limit") ?? 50), 100);
+  const limit = intParam(new URL(req.url).searchParams.get("limit"), { fallback: 50, min: 1, max: 100 });
   const jobs = must(
     await db()
       .from("research_jobs")

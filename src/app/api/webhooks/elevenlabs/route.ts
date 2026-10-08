@@ -1,5 +1,5 @@
 import { env } from "@/lib/env";
-import { handle, maybe } from "@/lib/http";
+import { handle, HttpError, maybe } from "@/lib/http";
 import { verifyWebhookSignature } from "@/lib/elevenlabs";
 import { applyConversation } from "@/lib/interviews";
 import { db } from "@/lib/supabase";
@@ -25,8 +25,14 @@ export const POST = handle(async (req: Request) => {
     return Response.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const event = JSON.parse(raw) as PostCallEvent;
+  let event: PostCallEvent;
+  try {
+    event = JSON.parse(raw) as PostCallEvent;
+  } catch {
+    throw new HttpError(400, "Body must be valid JSON");
+  }
   if (event.type !== "post_call_transcription") return Response.json({ ok: true, ignored: event.type });
+  if (!event.data?.conversation_id) throw new HttpError(400, "Missing data.conversation_id");
 
   const interview = maybe(
     await db()

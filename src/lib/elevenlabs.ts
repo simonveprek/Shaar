@@ -42,11 +42,11 @@ export async function createPersonaAgent(profile: PersonaProfile, voiceId: strin
 }
 
 export async function updatePersonaAgent(agentId: string, profile: PersonaProfile, voiceId: string): Promise<void> {
-  await call(`/v1/convai/agents/${agentId}`, { method: "PATCH", body: JSON.stringify(agentConfig(profile, voiceId)) });
+  await call(`/v1/convai/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", body: JSON.stringify(agentConfig(profile, voiceId)) });
 }
 
 export async function deleteAgent(agentId: string): Promise<void> {
-  await call(`/v1/convai/agents/${agentId}`, { method: "DELETE" });
+  await call(`/v1/convai/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
 }
 
 /** WebRTC token for the browser SDK: `startSession({ conversationToken })`. */

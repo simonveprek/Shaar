@@ -4,7 +4,7 @@ import { date, handleFrom, item, joinText, metrics, profileId, str } from "./uti
 const userUrl = (target: string) => {
   // Accept u/name, /user/name, full URLs, or a bare name.
   const name = handleFrom(target.replace(/^\/?u(ser)?\//i, ""), "/user");
-  return `https://www.reddit.com/user/${name.replace(/^u\//, "")}/`;
+  return `https://www.reddit.com/user/${name}/`;
 };
 
 export const reddit: Connector = {

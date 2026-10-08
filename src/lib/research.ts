@@ -64,12 +64,16 @@ export type Target = { platform: string; target: string; maxPosts?: number };
 const DEFAULT_MAX_POSTS = 30;
 const INGEST_PAGE_SIZE = 500;
 const MAX_INGEST_ITEMS = 2000;
+/** A job that sat in `analyzing` this long without persona generation running lost its worker; start it again. */
+const STALLED_ANALYSIS_MS = 2 * 60_000;
+/** Rows per request when paging through a table (Supabase returns at most 1000 rows per request by default). */
+const PAGE_ROWS = 1000;
 
 export async function createJob(
   userId: string,
   input: { subjectName: string; notes?: string; targets: Target[] },
 ): Promise<{ job: JobRow; runs: RunRow[] }> {
-  for (const t of input.targets) getConnector(t.platform); // validate platforms before writing anything
+  for (const t of input.targets) checkTarget(t); // validate everything before writing anything
 
   const job = must(
     await db()
@@ -81,6 +85,12 @@ export async function createJob(
 
   const runs = (await Promise.all(input.targets.map((t) => startConnector(job, t)))).flat();
   return { job, runs };
+}
+
+/** Throws a 400 for an unknown platform or a target the connector can't turn into actor input. */
+export function checkTarget(t: Target): void {
+  const opts = { maxPosts: t.maxPosts ?? DEFAULT_MAX_POSTS };
+  for (const actor of getConnector(t.platform).actors) actor.buildInput(t.target, opts);
 }
 
 /** Starts every Apify actor of a platform's connector (e.g. profile + posts) for one target. */
@@ -240,6 +250,14 @@ async function reloadRun(id: string): Promise<RunRow> {
   return must(await db().from("connector_runs").select().eq("id", id).single<RunRow>());
 }
 
+async function reloadJob(id: string): Promise<JobRow> {
+  return must(await db().from("research_jobs").select().eq("id", id).single<JobRow>());
+}
+
+async function loadPersona(jobId: string): Promise<PersonaRow | null> {
+  return maybe(await db().from("personas").select().eq("job_id", jobId).maybeSingle<PersonaRow>());
+}
+
 export async function getJob(jobId: string, userId: string): Promise<JobRow> {
   const job = maybe(
     await db().from("research_jobs").select().eq("id", jobId).eq("user_id", userId).maybeSingle<JobRow>(),
@@ -253,7 +271,7 @@ export async function getJob(jobId: string, userId: string): Promise<JobRow> {
  * (from status polling, Apify webhooks, or OpenAI completion).
  */
 export async function advanceJob(jobId: string): Promise<{ job: JobRow; runs: RunRow[]; persona: PersonaRow | null }> {
-  let job = must(await db().from("research_jobs").select().eq("id", jobId).single<JobRow>());
+  let job = await reloadJob(jobId);
   let runs = must(await db().from("connector_runs").select().eq("job_id", jobId).order("created_at").returns<RunRow[]>());
 
   if (job.status === "scraping") {
@@ -267,7 +285,17 @@ export async function advanceJob(jobId: string): Promise<{ job: JobRow; runs: Ru
     }
   }
 
-  let persona = maybe(await db().from("personas").select().eq("job_id", jobId).maybeSingle<PersonaRow>());
+  let persona = await loadPersona(jobId);
+
+  // A worker that died between claiming the job and starting the persona would leave it analyzing forever.
+  if (job.status === "analyzing" && persona?.status !== "generating" && Date.now() - Date.parse(job.updated_at) > STALLED_ANALYSIS_MS) {
+    if (persona?.status === "ready") {
+      job = await setJobStatus(job.id, "analyzing", { status: "ready" });
+    } else {
+      job = await restartStalledAnalysis(job);
+      persona = await loadPersona(jobId);
+    }
+  }
 
   if (job.status === "analyzing" && persona?.status === "generating" && persona.openai_response_id) {
     const poll = await pollPersonaGeneration(persona.openai_response_id);
@@ -308,11 +336,29 @@ async function startAnalysis(job: JobRow): Promise<JobRow> {
       .select()
       .maybeSingle<JobRow>(),
   );
-  if (!claimed) return must(await db().from("research_jobs").select().eq("id", job.id).single<JobRow>());
+  return claimed ? beginPersona(claimed) : reloadJob(job.id);
+}
 
+/** Retries a stalled analysis. `updated_at` acts as a version, so only one concurrent caller wins. */
+async function restartStalledAnalysis(job: JobRow): Promise<JobRow> {
+  const claimed = maybe(
+    await db()
+      .from("research_jobs")
+      .update({ status: "analyzing" })
+      .eq("id", job.id)
+      .eq("status", "analyzing")
+      .eq("updated_at", job.updated_at)
+      .select()
+      .maybeSingle<JobRow>(),
+  );
+  return claimed ? beginPersona(claimed) : reloadJob(job.id);
+}
+
+/** Starts persona generation for a claimed job; a failure to start fails the job. */
+async function beginPersona(job: JobRow): Promise<JobRow> {
   try {
-    await generatePersona(claimed);
-    return claimed;
+    await generatePersona(job);
+    return job;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return setJobStatus(job.id, "analyzing", { status: "failed", error: `Could not start analysis: ${message}` });
@@ -368,5 +414,26 @@ async function setJobStatus(
       .select()
       .maybeSingle<JobRow>(),
   );
-  return updated ?? must(await db().from("research_jobs").select().eq("id", jobId).single<JobRow>());
+  return updated ?? reloadJob(jobId);
+}
+
+/** Scraped item counts for a job, by platform and kind. */
+export async function countItems(jobId: string): Promise<Record<string, Record<string, number>>> {
+  const counts: Record<string, Record<string, number>> = {};
+  for (let from = 0; ; from += PAGE_ROWS) {
+    const rows = must(
+      await db()
+        .from("scraped_items")
+        .select("platform, kind")
+        .eq("job_id", jobId)
+        .order("id")
+        .range(from, from + PAGE_ROWS - 1)
+        .returns<{ platform: string; kind: string }[]>(),
+    );
+    for (const { platform, kind } of rows) {
+      counts[platform] ??= {};
+      counts[platform][kind] = (counts[platform][kind] ?? 0) + 1;
+    }
+    if (rows.length < PAGE_ROWS) return counts;
+  }
 }
