@@ -37,6 +37,7 @@ Rules:
   Respect reduced motion.
 - Everything must work at 375px wide. Check phone width for every screen you touch.
 - Copy is short and plain. No em dashes, no colons or dashes in sentences, no buzzwords.
+- No monospace type in the product UI. Small labels use the sans in spaced uppercase. Mono is only for code samples, like on `/docs`.
 - Treat `src/components/ui` and `src/components/fragms` as a vendored copy of Fragms Personal. Don't
   reshape a kit component for one screen; compose it, or wrap it in your own component. If the kit itself
   needs a fix, make it, and say so in the commit so it can go back upstream.

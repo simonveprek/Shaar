@@ -181,7 +181,7 @@ export function Landing() {
       </motion.div>
 
       <motion.p
-        className="absolute top-6 right-6 flex h-7 items-center font-mono text-[10.5px] tracking-[0.28em] text-muted uppercase sm:top-8 sm:right-8"
+        className="absolute top-6 right-6 flex h-7 items-center text-[11px] font-medium tracking-[0.22em] text-muted uppercase sm:top-8 sm:right-8"
         {...enter(AT.motto)}
       >
         Beware the Spectator
@@ -230,7 +230,7 @@ export function Landing() {
                   <Kbd className="h-7 min-w-7 rounded-item px-2 transition-colors duration-150 group-hover:bg-control-hover group-hover:text-foreground">
                     <Icon icon={CornerDownLeftIcon} size={14} />
                   </Kbd>
-                  <span className="font-mono text-[10.5px] tracking-[0.28em] text-muted uppercase transition-colors duration-150 group-hover:text-foreground">
+                  <span className="text-[11px] font-medium tracking-[0.22em] text-muted uppercase transition-colors duration-150 group-hover:text-foreground">
                     Enter to confirm
                   </span>
                 </motion.button>
@@ -328,7 +328,7 @@ function Subject({
         {name}
       </span>
       <motion.span
-        className="absolute top-full left-1/2 mt-7 -translate-x-1/2 font-mono text-[10.5px] tracking-[0.28em] whitespace-nowrap text-muted uppercase"
+        className="absolute top-full left-1/2 mt-7 -translate-x-1/2 text-[11px] font-medium tracking-[0.22em] whitespace-nowrap text-muted uppercase"
         initial={reduce ? false : { opacity: 0, filter: "blur(6px)" }}
         animate={confirmed ? { opacity: 1, filter: "blur(0px)" } : undefined}
         transition={{ duration: 0.6, ease: EASE }}
