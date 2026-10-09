@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/simonveprek/projstalker/actions/workflows/ci.yml"><img src="https://github.com/simonveprek/projstalker/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/simonveprek/Shaar/actions/workflows/ci.yml"><img src="https://github.com/simonveprek/Shaar/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/scraping-Apify-0d0d0d" alt="Apify" />
   <img src="https://img.shields.io/badge/voice-ElevenLabs-0d0d0d" alt="ElevenLabs" />
   <img src="https://img.shields.io/badge/Next.js-16-0d0d0d" alt="Next.js 16" />
